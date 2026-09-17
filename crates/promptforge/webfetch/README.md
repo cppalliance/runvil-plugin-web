@@ -15,7 +15,7 @@ promptforge-webfetch = "0.1"
 
 ```rust
 use promptforge_webfetch::WebFetch;
-use shared_promptforge_api::tools::Tool;
+use promptforge_api_types::tools::Tool;
 
 let tool = WebFetch::new();
 let output = tool.call(serde_json::json!({ "url": "https://example.com" })).await?;

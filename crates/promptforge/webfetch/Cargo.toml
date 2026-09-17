@@ -13,7 +13,7 @@ categories = ["web-programming::http-client"]
 documentation = "https://cppalliance.github.io/promptforge/"
 
 [dependencies]
-shared-promptforge-api.workspace = true
+promptforge-api-types.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
 reqwest = { workspace = true, features = ["gzip", "brotli"] }

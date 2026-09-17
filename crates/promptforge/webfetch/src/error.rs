@@ -10,7 +10,7 @@
 
 use std::net::IpAddr;
 
-use shared_promptforge_api::tools::ToolErrorKind;
+use promptforge_api_types::tools::ToolErrorKind;
 
 /// How the `Tool::call` boundary should treat a [`FetchError`].
 ///
@@ -260,7 +260,7 @@ mod tests {
     use std::error::Error as _;
     use std::net::IpAddr;
 
-    use shared_promptforge_api::tools::ToolErrorKind;
+    use promptforge_api_types::tools::ToolErrorKind;
 
     use super::{Disposition, FetchError, SafeUrl};
 

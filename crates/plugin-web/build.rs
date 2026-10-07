@@ -1,5 +1,5 @@
 //! Includes the file-size check's source instead of depending on
-//! `build-ceiling`, because Harness crates may name no `build-*` crate.
+//! `build-ceiling`, because Plugin crates may name no `build-*` crate.
 
 #[expect(
     unreachable_pub,

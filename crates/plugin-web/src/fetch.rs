@@ -1,6 +1,6 @@
 //! The `web_fetch` tool: [`FetchClient`], the hardened HTTP client and the
 //! policy it enforces, built once, and [`WebFetch`], that client bound to
-//! the Host's runtime, which implements [`Tool`].
+//! the Host's runtime, whose [`call`](WebFetch::call) performs one fetch.
 //!
 //! `FetchClient` composes the URL-admission policy, the guarded DNS resolver,
 //! the per-hop redirect policy, and the bounded body reads into one safe
@@ -16,8 +16,7 @@ use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use url::Url;
 
-use harness::plugin::{Tool, ToolContext};
-use promptforge::tools::{ToolError, ToolErrorKind, ToolId, ToolOutput};
+use promptforge_plugin::{ToolError, ToolErrorKind, ToolOutput};
 
 use crate::config::{ConfigError, FetchConfig};
 use crate::error::{Disposition, FetchError, SafeUrl};
@@ -29,8 +28,8 @@ use crate::response::{
 };
 use crate::url_policy::check_url;
 
-/// The result the [`Tool::call`] boundary returns: untrusted page text on
-/// success, a narrow [`ToolError`] on a hard failure.
+/// The result [`WebFetch::call`] returns: untrusted page text on success,
+/// a narrow [`ToolError`] on a hard failure.
 type CallResult = Result<ToolOutput, ToolError>;
 
 /// The hardened HTTP client the fetch tool sends every request through,
@@ -92,6 +91,13 @@ impl FetchClient {
     /// (for example a TLS backend that fails to initialize). The policy itself
     /// is already validated by [`FetchConfig`] construction, so no policy field
     /// can trigger a failure here.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "web's configuration accepts no settings yet, so only the crate's tests build a custom fetch policy"
+        )
+    )]
     pub(crate) fn try_with_config(config: FetchConfig) -> Result<FetchClient, ConfigError> {
         let config = Arc::new(config);
         let http = build_client(&config).map_err(ConfigError::client_build)?;
@@ -297,33 +303,19 @@ fn map_send_error_to_outcome(err: &reqwest::Error, url: &str) -> CallResult {
     )))
 }
 
-#[async_trait::async_trait]
-impl Tool for WebFetch {
+impl WebFetch {
+    /// The one sentence the model reads to decide when to fetch.
     #[expect(
-        clippy::expect_used,
-        reason = "the id is a literal of the tool id grammar; a parse failure is a defect in this file, not a caller-actionable condition"
+        clippy::unused_self,
+        reason = "both tools' descriptions and schemas are read through the tool, as this tool's schema reads its policy"
     )]
-    fn id(&self) -> ToolId {
-        ToolId::parse("web/fetch").expect("the literal web_fetch id parses")
-    }
-
-    #[expect(
-        clippy::unnecessary_literal_bound,
-        reason = "the Tool trait fixes this return type to &str, so the &'static str suggestion cannot be applied"
-    )]
-    fn wire_name(&self) -> &str {
-        "web_fetch"
-    }
-
-    #[expect(
-        clippy::unnecessary_literal_bound,
-        reason = "the Tool trait fixes this return type to &str, so the &'static str suggestion cannot be applied"
-    )]
-    fn description(&self) -> &str {
+    pub(crate) fn description(&self) -> &'static str {
         "Fetch a web page and return its main content as markdown."
     }
 
-    fn parameters_schema(&self) -> serde_json::Value {
+    /// The JSON Schema for a fetch's arguments, with `max_chars` capped at
+    /// the policy's ceiling.
+    pub(crate) fn parameters_schema(&self) -> serde_json::Value {
         let ceiling = self.client.config.max_chars();
         serde_json::json!({
             "type": "object",
@@ -347,7 +339,15 @@ impl Tool for WebFetch {
         })
     }
 
-    async fn call(&self, _cx: ToolContext<'_>, args: serde_json::Value) -> CallResult {
+    /// Fetches the URL `args` names on the Host's runtime and renders its
+    /// response as untrusted text. Dropping the returned future aborts the
+    /// fetch.
+    ///
+    /// # Errors
+    /// Returns a [`ToolError`] for invalid arguments, a URL the policy
+    /// refuses outright, or a fetch task that did not finish. A page the
+    /// fetch could not render is a soft, untrusted output instead.
+    pub(crate) async fn call(&self, args: serde_json::Value) -> CallResult {
         let url = args
             .get("url")
             .and_then(serde_json::Value::as_str)

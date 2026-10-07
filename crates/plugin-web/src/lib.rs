@@ -1,24 +1,24 @@
 //! Web access for prompts: a Plugin that gives a run two tools, one
 //! that fetches a page and one that searches the web.
 //!
-//! A Host registers [`Web`] in its Plugin registry. A prompt turns it
-//! on with one frontmatter line, `plugins: [web]`. The
-//! run then gets both tools: `web/fetch`, which fetches a URL
-//! and returns its content as text, and `web/search`, which
-//! runs a search through the Host's [`SearchProvider`]. The two tools
-//! always come together.
+//! A Host installs [`PACKAGE`], by default under the name `web`. A prompt
+//! turns it on with one frontmatter line, `plugins: [web]`. The run then
+//! gets both tools: `web/fetch`, which fetches a URL and returns its
+//! content as text, and `web/search`, which runs a search through the
+//! Host's [`SearchProvider`]. The two tools always come together, named
+//! under whatever name the Host installed the Plugin under.
 //!
-//! The Host also provides two services beside the Plugin. Its
-//! [`SearchProvider`] is registered under the key [`SEARCH_PROVIDER`]. The
-//! tokio runtime handle that every fetch is spawned onto is registered
-//! under the key [`TOKIO_RUNTIME`]. A run gets the web tools only when
-//! both services are registered.
+//! The Host provides two Host-wide services beside the Plugin. Its
+//! [`SearchProvider`] goes under the key [`SEARCH_PROVIDER`], and the
+//! tokio runtime handle that every fetch is spawned onto goes under the
+//! key [`TOKIO_RUNTIME`]. Install reads both; when either is missing, the
+//! Plugin is installed as unavailable and a prompt that declares it is
+//! refused naming the missing service.
 //!
 //! The fetch tool is security-critical. The model supplies the URL, so the
 //! tool is the server-side request forgery (SSRF) boundary between an
-//! untrusted argument and the network. A Host can replace the default
-//! fetch policy with a [`FetchConfig`] built by [`FetchConfigBuilder`].
-//! A configuration problem is reported as a [`ConfigError`].
+//! untrusted argument and the network. It enforces the built-in default
+//! fetch policy.
 //!
 //! The fetch tool sends a GET request and chooses how to render the
 //! response from its `Content-Type`. For an HTML page, it extracts the
@@ -38,6 +38,9 @@
 //!
 //! ## Invariants
 //!
+//! - May depend on: `promptforge-plugin`, `shared-*` crates,
+//!   `workspace-hack`, and outside libraries. `cargo test -p build-xtask`
+//!   enforces the Plugin family's allow-list.
 //! - Every URL selected by the model or a tool, and every resolved
 //!   address, is validated again on each redirect hop. A non-global
 //!   address is denied unless the fetch policy grants an exact
@@ -49,6 +52,13 @@
 //!   aborts it.
 
 mod address;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "web's configuration accepts no settings yet, so only the crate's tests build a custom fetch policy"
+    )
+)]
 mod config;
 mod error;
 mod fetch;
@@ -57,14 +67,11 @@ mod redirect;
 mod resolver;
 mod response;
 mod search;
-#[cfg(test)]
-mod test_support;
 mod url_policy;
 mod web;
 
-pub use crate::config::{ConfigError, FetchConfig, FetchConfigBuilder};
 pub use crate::provider::{
     Freshness, SafeSearch, SearchError, SearchErrorKind, SearchProvider, SearchQuery, SearchResult,
     SearchResults,
 };
-pub use crate::web::{SEARCH_PROVIDER, TOKIO_RUNTIME, Web};
+pub use crate::web::{PACKAGE, SEARCH_PROVIDER, TOKIO_RUNTIME};

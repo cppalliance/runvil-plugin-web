@@ -23,7 +23,7 @@ use super::{HostAddressException, MAX_REDIRECTS_CEILING, MaxRedirects, UserAgent
 /// [`Display`]: std::fmt::Display
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct ConfigError(#[from] ConfigErrorRepr);
+pub(crate) struct ConfigError(#[from] ConfigErrorRepr);
 
 /// The private representation behind [`ConfigError`].
 #[derive(Debug, thiserror::Error)]

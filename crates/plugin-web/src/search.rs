@@ -5,8 +5,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use harness::plugin::{Tool, ToolContext};
-use promptforge::tools::{ToolError, ToolErrorKind, ToolId, ToolOutput};
+use promptforge_plugin::{ToolError, ToolErrorKind, ToolOutput};
 
 use crate::provider::{SearchErrorKind, SearchProvider};
 
@@ -46,37 +45,24 @@ impl WebSearch {
     pub(crate) fn new(provider: Arc<dyn SearchProvider>) -> WebSearch {
         WebSearch { provider }
     }
-}
 
-#[async_trait::async_trait]
-impl Tool for WebSearch {
+    /// The one sentence the model reads to decide when to search.
     #[expect(
-        clippy::expect_used,
-        reason = "the id is a literal of the tool id grammar; a parse failure is a defect in this file, not a caller-actionable condition"
+        clippy::unused_self,
+        reason = "both tools' descriptions and schemas are read through the tool, as the fetch tool's schema reads its policy"
     )]
-    fn id(&self) -> ToolId {
-        ToolId::parse("web/search").expect("the literal web_search id parses")
-    }
-
-    #[expect(
-        clippy::unnecessary_literal_bound,
-        reason = "the Tool trait fixes this return type to &str, so the &'static str suggestion cannot be applied"
-    )]
-    fn wire_name(&self) -> &str {
-        "web_search"
-    }
-
-    #[expect(
-        clippy::unnecessary_literal_bound,
-        reason = "the Tool trait fixes this return type to &str, so the &'static str suggestion cannot be applied"
-    )]
-    fn description(&self) -> &str {
+    pub(crate) fn description(&self) -> &'static str {
         // Keep this sentence aligned with shipped prompts/picker fixtures; knobs
         // live in parameters_schema so capability bind stays stable.
         "Search the web and return a list of results (title, url, description)."
     }
 
-    fn parameters_schema(&self) -> serde_json::Value {
+    /// The JSON Schema for a search's arguments.
+    #[expect(
+        clippy::unused_self,
+        reason = "both tools' descriptions and schemas are read through the tool, as the fetch tool's schema reads its policy"
+    )]
+    pub(crate) fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "additionalProperties": false,
@@ -130,11 +116,13 @@ impl Tool for WebSearch {
         })
     }
 
-    async fn call(
-        &self,
-        _cx: ToolContext<'_>,
-        args: serde_json::Value,
-    ) -> Result<ToolOutput, ToolError> {
+    /// Validates `args`, runs the search through the provider, and returns
+    /// the results as untrusted compact JSON.
+    ///
+    /// # Errors
+    /// Returns a [`ToolError`] for invalid arguments, a provider failure,
+    /// or a malformed response.
+    pub(crate) async fn call(&self, args: serde_json::Value) -> Result<ToolOutput, ToolError> {
         // Validate and normalize arguments before the provider spends a
         // round; only the validated query reaches it.
         let query = SearchRequest::from_args(args)?.into_query();

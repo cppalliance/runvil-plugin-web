@@ -21,15 +21,12 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use harness::plugin::Tool;
-use promptforge::tools::ToolId;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::runtime::Handle;
 
 use super::{FetchClient, WebFetch};
 use crate::config::{FetchConfig, FetchConfigBuilder};
 use crate::resolver::{Lookup, LookupFuture};
-use crate::test_support::TestContext;
 
 /// An article page long enough for readability extraction to fire.
 const ARTICLE_HTML: &str = r"
@@ -95,11 +92,9 @@ fn on_this_runtime(client: &FetchClient) -> WebFetch {
 }
 
 #[tokio::test]
-async fn descriptor_is_stable_and_faithful() {
+async fn the_description_and_schema_are_stable_and_faithful() {
     let tool = on_this_runtime(&FetchClient::new());
 
-    assert_eq!(tool.id(), ToolId::parse("web/fetch").expect("valid id"));
-    assert_eq!(tool.wire_name(), "web_fetch");
     assert_eq!(
         tool.description(),
         "Fetch a web page and return its main content as markdown."
@@ -108,18 +103,6 @@ async fn descriptor_is_stable_and_faithful() {
     assert_eq!(schema["properties"]["max_chars"]["maximum"], 40_000);
     assert_eq!(schema["required"], serde_json::json!(["url"]));
     assert_eq!(schema["properties"]["url"]["type"], "string");
-}
-
-#[tokio::test]
-async fn the_migrated_id_names_its_contributing_plugin() {
-    // Dropping the last segment of web/fetch must yield the
-    // contributing Plugin's id.
-    let id = on_this_runtime(&FetchClient::new()).id();
-    assert_eq!(id.name(), "fetch");
-    assert_eq!(
-        id.plugin(),
-        promptforge::plugins::PluginId::parse("web").expect("a valid Plugin id")
-    );
 }
 
 #[derive(Clone)]
@@ -431,8 +414,7 @@ async fn a_fetch_whose_call_is_dropped_aborts_its_spawned_task() {
     let tool = loopback_tool(port);
     let url = format!("http://localhost:{port}/hold");
 
-    let context = TestContext::new();
-    let call = tool.call(context.lend(), serde_json::json!({ "url": url }));
+    let call = tool.call(serde_json::json!({ "url": url }));
     tokio::select! {
         result = call => panic!("the held fetch must not finish: {result:?}"),
         requested = requested_rx => requested.expect("the server saw the request"),

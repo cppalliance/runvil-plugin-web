@@ -3,16 +3,16 @@
 //! [`FetchError`] is the single internal error type for every `web_fetch`
 //! failure mode: the URL and address policies, redirects, DNS, the size caps,
 //! the timeouts, the body read, and the content-type and decoding refusals. It
-//! is never public; the `Tool::call` boundary maps it to a narrow `ToolError`
+//! is never public; `call` maps it to a narrow `ToolError`
 //! through [`FetchError::classify`]. It provides a model-facing rendering
 //! that withholds internal detail, and preserves dependency and I/O causes
 //! behind `#[source]` fields so a log can inspect the chain.
 
 use std::net::IpAddr;
 
-use promptforge::tools::ToolErrorKind;
+use promptforge_plugin::ToolErrorKind;
 
-/// How the `Tool::call` boundary should treat a [`FetchError`].
+/// How `call` should treat a [`FetchError`].
 ///
 /// A [`Disposition::SoftOutput`] error is returned to the model as untrusted
 /// tool text so it can try a different URL; a [`Disposition::Hard`] error aborts
@@ -224,7 +224,7 @@ impl FetchError {
         }
     }
 
-    /// Decides how the `Tool::call` boundary should treat this error.
+    /// Decides how `call` should treat this error.
     ///
     /// The match is exhaustive with no wildcard, so a new variant forces an
     /// explicit disposition and kind decision at compile time. Target, network,
@@ -261,7 +261,7 @@ mod tests {
     use std::error::Error as _;
     use std::net::IpAddr;
 
-    use promptforge::tools::ToolErrorKind;
+    use promptforge_plugin::ToolErrorKind;
 
     use super::{Disposition, FetchError, SafeUrl};
 

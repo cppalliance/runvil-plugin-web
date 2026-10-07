@@ -20,7 +20,7 @@ use ipnet::IpNet;
 #[path = "config-validate.rs"]
 mod validate;
 
-pub use validate::ConfigError;
+pub(crate) use validate::ConfigError;
 use validate::{
     validate_allow_hosts, validate_deny_cidrs, validate_limit, validate_redirects,
     validate_timeout, validate_user_agent,
@@ -128,7 +128,7 @@ fn canonical_host(host: &str) -> String {
 /// [`FetchConfig::default`] for the built-in safe policy, or start from
 /// [`FetchConfig::builder`] to customize one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FetchConfig {
+pub(crate) struct FetchConfig {
     /// Whether to permit `http://` URLs; `https://` is always allowed.
     allow_http: bool,
     /// The ports a fetch may target (matched against the URL's effective port).
@@ -158,7 +158,7 @@ pub struct FetchConfig {
 impl FetchConfig {
     /// Starts a builder seeded with the built-in default policy.
     #[must_use]
-    pub fn builder() -> FetchConfigBuilder {
+    pub(crate) fn builder() -> FetchConfigBuilder {
         FetchConfigBuilder::default()
     }
 
@@ -252,7 +252,7 @@ impl Default for FetchConfig {
 /// [`FetchConfigBuilder::build`] checks every value at once and reports the
 /// first invalid one as a [`ConfigError`].
 #[derive(Debug, Clone)]
-pub struct FetchConfigBuilder {
+pub(crate) struct FetchConfigBuilder {
     allow_http: bool,
     allow_ports: Vec<u16>,
     allow_ip_literals: bool,
@@ -289,14 +289,17 @@ impl Default for FetchConfigBuilder {
 impl FetchConfigBuilder {
     /// Sets whether plain `http://` URLs are permitted.
     #[must_use]
-    pub fn allow_http(mut self, yes: bool) -> FetchConfigBuilder {
+    pub(crate) fn allow_http(mut self, yes: bool) -> FetchConfigBuilder {
         self.allow_http = yes;
         self
     }
 
     /// Replaces the set of ports a fetch may target.
     #[must_use]
-    pub fn allow_ports(mut self, ports: impl IntoIterator<Item = u16>) -> FetchConfigBuilder {
+    pub(crate) fn allow_ports(
+        mut self,
+        ports: impl IntoIterator<Item = u16>,
+    ) -> FetchConfigBuilder {
         self.allow_ports = ports.into_iter().collect();
         self
     }
@@ -308,7 +311,7 @@ impl FetchConfigBuilder {
     /// non-global address stays blocked unless an exact host-and-address
     /// exception allows it.
     #[must_use]
-    pub fn allow_ip_literals(mut self, yes: bool) -> FetchConfigBuilder {
+    pub(crate) fn allow_ip_literals(mut self, yes: bool) -> FetchConfigBuilder {
         self.allow_ip_literals = yes;
         self
     }
@@ -319,7 +322,7 @@ impl FetchConfigBuilder {
     ///
     /// [`build`]: FetchConfigBuilder::build
     #[must_use]
-    pub fn deny_cidr(mut self, cidr: impl Into<String>) -> FetchConfigBuilder {
+    pub(crate) fn deny_cidr(mut self, cidr: impl Into<String>) -> FetchConfigBuilder {
         self.deny_cidrs.push(cidr.into());
         self
     }
@@ -334,7 +337,7 @@ impl FetchConfigBuilder {
     ///
     /// [`build`]: FetchConfigBuilder::build
     #[must_use]
-    pub fn allow_host_address(
+    pub(crate) fn allow_host_address(
         mut self,
         host: impl Into<String>,
         addr: IpAddr,
@@ -345,49 +348,49 @@ impl FetchConfigBuilder {
 
     /// Sets the maximum number of redirect hops a single fetch may follow.
     #[must_use]
-    pub fn max_redirects(mut self, n: usize) -> FetchConfigBuilder {
+    pub(crate) fn max_redirects(mut self, n: usize) -> FetchConfigBuilder {
         self.max_redirects = n;
         self
     }
 
     /// Sets the largest response body accepted, in decompressed bytes.
     #[must_use]
-    pub fn max_bytes(mut self, n: usize) -> FetchConfigBuilder {
+    pub(crate) fn max_bytes(mut self, n: usize) -> FetchConfigBuilder {
         self.max_bytes = n;
         self
     }
 
     /// Sets the ceiling on returned text length, in characters.
     #[must_use]
-    pub fn max_chars(mut self, n: usize) -> FetchConfigBuilder {
+    pub(crate) fn max_chars(mut self, n: usize) -> FetchConfigBuilder {
         self.max_chars = n;
         self
     }
 
     /// Sets the time allowed to open a TCP connection, on every redirect hop.
     #[must_use]
-    pub fn connect_timeout(mut self, d: Duration) -> FetchConfigBuilder {
+    pub(crate) fn connect_timeout(mut self, d: Duration) -> FetchConfigBuilder {
         self.connect_timeout = d;
         self
     }
 
     /// Sets the cap on the total time a single request may take.
     #[must_use]
-    pub fn timeout(mut self, d: Duration) -> FetchConfigBuilder {
+    pub(crate) fn timeout(mut self, d: Duration) -> FetchConfigBuilder {
         self.timeout = d;
         self
     }
 
     /// Sets how long an idle pooled connection is kept before it is closed.
     #[must_use]
-    pub fn pool_idle_timeout(mut self, d: Duration) -> FetchConfigBuilder {
+    pub(crate) fn pool_idle_timeout(mut self, d: Duration) -> FetchConfigBuilder {
         self.pool_idle_timeout = d;
         self
     }
 
     /// Sets the `User-Agent` header sent on every request.
     #[must_use]
-    pub fn user_agent(mut self, ua: impl Into<String>) -> FetchConfigBuilder {
+    pub(crate) fn user_agent(mut self, ua: impl Into<String>) -> FetchConfigBuilder {
         self.user_agent = ua.into();
         self
     }
@@ -406,7 +409,7 @@ impl FetchConfigBuilder {
     /// - a `pool_idle_timeout` of zero or above 600 seconds;
     /// - a denied CIDR range that fails to parse;
     /// - an exception host that is not a valid domain name or IP address.
-    pub fn build(self) -> Result<FetchConfig, ConfigError> {
+    pub(crate) fn build(self) -> Result<FetchConfig, ConfigError> {
         let user_agent = validate_user_agent(self.user_agent)?;
         let max_bytes = validate_limit("max_bytes", self.max_bytes, MAX_BYTES_CEILING)?;
         let max_chars = validate_limit("max_chars", self.max_chars, MAX_CHARS_CEILING)?;

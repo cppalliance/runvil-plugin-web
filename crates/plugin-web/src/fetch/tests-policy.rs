@@ -6,7 +6,7 @@
 
 use super::*;
 
-use promptforge::tools::ToolErrorKind;
+use promptforge_plugin::ToolErrorKind;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_server_past_total_timeout_yields_timeout() {
@@ -19,7 +19,7 @@ async fn slow_server_past_total_timeout_yields_timeout() {
 
     let url = format!("http://localhost:{port}/slow");
     let result = tool
-        .call(TestContext::new().lend(), serde_json::json!({ "url": url }))
+        .call(serde_json::json!({ "url": url }))
         .await
         .expect("a timeout is a soft (recoverable) return")
         .text()
@@ -37,7 +37,7 @@ async fn request_omits_the_cookie_and_authorization_headers() {
     let tool = loopback_tool(port);
 
     let url = format!("http://localhost:{port}/record");
-    tool.call(TestContext::new().lend(), serde_json::json!({ "url": url }))
+    tool.call(serde_json::json!({ "url": url }))
         .await
         .expect("a loopback fetch through allow_exact must succeed");
 
@@ -58,7 +58,7 @@ async fn no_credential_or_referer_survives_a_redirect() {
     // A query-bearing source URL redirecting to a distinct allowed path: the
     // target must receive no Cookie, Authorization, or Referer.
     let url = format!("http://localhost:{port}/redir-record?secret=leak-me");
-    tool.call(TestContext::new().lend(), serde_json::json!({ "url": url }))
+    tool.call(serde_json::json!({ "url": url }))
         .await
         .expect("a redirect between loopback paths must succeed");
 
@@ -82,7 +82,7 @@ async fn fetch_returns_provenance_line_then_content() {
 
     let url = format!("http://localhost:{port}/");
     let out = tool
-        .call(TestContext::new().lend(), serde_json::json!({ "url": url }))
+        .call(serde_json::json!({ "url": url }))
         .await
         .expect("a loopback fetch through allow_exact must succeed")
         .text()
@@ -100,7 +100,7 @@ async fn redirect_to_internal_is_refused_and_target_untouched() {
 
     let url = format!("http://localhost:{port}/redir");
     let result = tool
-        .call(TestContext::new().lend(), serde_json::json!({ "url": url }))
+        .call(serde_json::json!({ "url": url }))
         .await
         .expect("a redirect-target policy refusal is a soft (recoverable) return")
         .text()
@@ -161,10 +161,7 @@ async fn redirect_to_internal_via_injected_lookup_never_contacts_target() {
     let url = format!("http://allowed.test:{redir_port}/go");
     // The outcome may be a hard error (the redirect address is blocked) or a
     // soft return, but it must never include the internal target's body.
-    if let Ok(output) = tool
-        .call(TestContext::new().lend(), serde_json::json!({ "url": url }))
-        .await
-    {
+    if let Ok(output) = tool.call(serde_json::json!({ "url": url })).await {
         assert!(
             !output.text().contains("reached the internal target"),
             "the internal target body must never be returned"
@@ -196,7 +193,7 @@ async fn call_rejects_bad_urls_before_network() {
 
     for (raw, reason) in hard_cases {
         let err = tool
-            .call(TestContext::new().lend(), serde_json::json!({ "url": raw }))
+            .call(serde_json::json!({ "url": raw }))
             .await
             .expect_err(&format!("expected {raw} to be refused before any network"));
         assert!(
@@ -210,10 +207,7 @@ async fn call_rejects_bad_urls_before_network() {
     }
 
     let soft = tool
-        .call(
-            TestContext::new().lend(),
-            serde_json::json!({ "url": "http://example.com/" }),
-        )
+        .call(serde_json::json!({ "url": "http://example.com/" }))
         .await
         .expect("blocked http scheme must be soft tool text")
         .text()
@@ -231,7 +225,7 @@ async fn soft_return_on_404() {
 
     let url = format!("http://localhost:{port}/notfound");
     let result = tool
-        .call(TestContext::new().lend(), serde_json::json!({ "url": url }))
+        .call(serde_json::json!({ "url": url }))
         .await
         .expect("a 404 must be a soft return")
         .text()
@@ -247,7 +241,7 @@ async fn soft_return_on_500() {
 
     let url = format!("http://localhost:{port}/error500");
     let result = tool
-        .call(TestContext::new().lend(), serde_json::json!({ "url": url }))
+        .call(serde_json::json!({ "url": url }))
         .await
         .expect("a 500 must be a soft return")
         .text()
@@ -261,10 +255,7 @@ async fn blocked_url_still_hard_fails() {
     let tool = on_this_runtime(&FetchClient::new());
 
     let err = tool
-        .call(
-            TestContext::new().lend(),
-            serde_json::json!({ "url": "https://1.2.3.4/secret" }),
-        )
+        .call(serde_json::json!({ "url": "https://1.2.3.4/secret" }))
         .await
         .expect_err("a bare IP literal URL must still be a hard error");
 

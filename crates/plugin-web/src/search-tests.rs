@@ -1,5 +1,5 @@
-//! Tests for the `WebSearch` tool against a fake provider: descriptor,
-//! argument validation, the query the provider receives, the rendered
+//! Tests for the `WebSearch` tool against a fake provider: description
+//! and schema, argument validation, the query the provider receives, the rendered
 //! results, and how a provider failure maps.
 
 use std::sync::{Arc, Mutex};
@@ -9,9 +9,7 @@ use crate::provider::{
     Freshness, SafeSearch, SearchError, SearchErrorKind, SearchProvider, SearchQuery, SearchResult,
     SearchResults,
 };
-use crate::test_support::TestContext;
-use harness::plugin::Tool;
-use promptforge::tools::{OutputTrust, ToolError, ToolErrorKind, ToolId};
+use promptforge_plugin::{OutputTrust, ToolError, ToolErrorKind};
 
 /// A provider that records every query and answers each with `reply`.
 struct Fake {
@@ -65,7 +63,7 @@ fn tool() -> (WebSearch, Arc<Fake>) {
 async fn refused(args: serde_json::Value) -> ToolError {
     let (tool, fake) = tool();
     let err = tool
-        .call(TestContext::new().lend(), args)
+        .call(args)
         .await
         .expect_err("invalid arguments must be refused");
     assert!(
@@ -76,11 +74,9 @@ async fn refused(args: serde_json::Value) -> ToolError {
 }
 
 #[test]
-fn descriptor_is_stable_and_faithful() {
+fn the_description_and_schema_are_stable_and_faithful() {
     let (tool, _fake) = tool();
 
-    assert_eq!(tool.id(), ToolId::parse("web/search").expect("valid id"));
-    assert_eq!(tool.wire_name(), "web_search");
     assert_eq!(
         tool.description(),
         "Search the web and return a list of results (title, url, description)."
@@ -141,34 +137,18 @@ fn descriptor_is_stable_and_faithful() {
     );
 }
 
-#[test]
-fn the_migrated_id_names_its_contributing_plugin() {
-    // Dropping the last segment of web/search must yield the
-    // contributing Plugin's id.
-    let (tool, _fake) = tool();
-    let id = tool.id();
-    assert_eq!(id.name(), "search");
-    assert_eq!(
-        id.plugin(),
-        promptforge::plugins::PluginId::parse("web").expect("a valid Plugin id")
-    );
-}
-
 #[tokio::test]
 async fn the_provider_receives_the_validated_arguments_as_its_query() {
     let (tool, fake) = tool();
-    tool.call(
-        TestContext::new().lend(),
-        serde_json::json!({
-            "query": "hi",
-            "count": 5,
-            "freshness": "pw",
-            "country": "us",
-            "search_lang": "en",
-            "safesearch": "strict",
-            "include_domains": ["example.com"]
-        }),
-    )
+    tool.call(serde_json::json!({
+        "query": "hi",
+        "count": 5,
+        "freshness": "pw",
+        "country": "us",
+        "search_lang": "en",
+        "safesearch": "strict",
+        "include_domains": ["example.com"]
+    }))
     .await
     .expect("a fully-specified valid request should succeed");
 
@@ -212,10 +192,7 @@ fn full_and_bare_results() -> SearchResults {
 async fn results_render_as_the_gateways_serialization_and_are_untrusted() {
     let (tool, _fake) = tool_answering(|| Ok(full_and_bare_results()));
     let output = tool
-        .call(
-            TestContext::new().lend(),
-            serde_json::json!({ "query": "rust" }),
-        )
+        .call(serde_json::json!({ "query": "rust" }))
         .await
         .expect("the provider's results render");
 
@@ -260,10 +237,7 @@ fn blank_url_result() -> SearchResults {
 async fn success_body_with_empty_url_is_rejected() {
     let (tool, _fake) = tool_answering(|| Ok(blank_url_result()));
     let err = tool
-        .call(
-            TestContext::new().lend(),
-            serde_json::json!({ "query": "hi" }),
-        )
+        .call(serde_json::json!({ "query": "hi" }))
         .await
         .expect_err("an empty result url must be rejected");
     assert_eq!(err.kind(), ToolErrorKind::Backend);
@@ -292,10 +266,7 @@ fn backend_failure() -> Result<SearchResults, SearchError> {
 async fn provider_errors_map_their_kind_and_message_and_stay_the_source() {
     let (tool, _fake) = tool_answering(transport_failure);
     let err = tool
-        .call(
-            TestContext::new().lend(),
-            serde_json::json!({ "query": "hi" }),
-        )
+        .call(serde_json::json!({ "query": "hi" }))
         .await
         .expect_err("a transport failure fails the call");
     assert_eq!(err.kind(), ToolErrorKind::Transport);
@@ -312,10 +283,7 @@ async fn provider_errors_map_their_kind_and_message_and_stay_the_source() {
 
     let (tool, _fake) = tool_answering(backend_failure);
     let err = tool
-        .call(
-            TestContext::new().lend(),
-            serde_json::json!({ "query": "hi" }),
-        )
+        .call(serde_json::json!({ "query": "hi" }))
         .await
         .expect_err("a backend failure fails the call");
     assert_eq!(err.kind(), ToolErrorKind::Backend);

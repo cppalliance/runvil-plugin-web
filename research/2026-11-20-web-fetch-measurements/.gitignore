@@ -1,0 +1,5 @@
+target/
+out*/
+pdfs/
+fixtures/*
+!fixtures/issue23-profile.html

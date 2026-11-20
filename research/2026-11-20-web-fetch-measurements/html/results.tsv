@@ -1,0 +1,181 @@
+method	page	chars	ms	include_hit	include_total	exclude_leaks	exclude_total	missing	leaked
+runvil_current	article-npr	6360	12.2	4	4	1	3		NPR does not offer
+runvil_current	article-rustblog	16707	19.0	4	4	0	2		
+runvil_current	docs-docsrs-reqwest	8055	20.9	3	4	1	3	Shortcut method to quickly make	Feature flags
+runvil_current	docs-rustbook	27315	10.8	4	4	0	1		
+runvil_current	issue23-profile	145	0.4	1	3	0	3	Jane Doe | Turku, Finland	
+runvil_current	listing-forum-latest	17429	23.5	2	2	0	3		
+runvil_current	listing-hn	28905	21.0	4	4	1	2		vote?id=
+runvil_current	listing-lobsters	133	18.0	0	4	0	2	Codeberg's domain suddenly disappeared | PostgreSQL 19 Released | custom game engine for Satelital | Type inference and narrowing with reverse arrows	
+runvil_current	product-adafruit	4006	20.3	2	3	0	2	Raspberry Pi 5 - 8 GB RAM	
+runvil_current	profile-cppalliance-vinnie	1866	6.0	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+runvil_current	profile-github-vinnie	1958	22.5	2	3	0	4	I'm into C++ and Boost	
+runvil_current	repo-github-runvil	4546	45.1	3	3	0	3		
+runvil_current	search-ddg	775	7.2	0	3	0	2	Htmd: A turndown.js inspired | Low latency HTML to markdown for Rust | markdown - Rust - Docs.rs	
+runvil_current	spa-cratesio-htmd	881	0.4	0	1	2	2	turndown	sveltekit | window.onerror
+runvil_current	wiki-readability	81914	375.2	4	4	0	4		
+runvil_ratio_fallback	article-npr	6360	14.0	4	4	1	3		NPR does not offer
+runvil_ratio_fallback	article-rustblog	16707	20.1	4	4	0	2		
+runvil_ratio_fallback	docs-docsrs-reqwest	8055	22.6	3	4	1	3	Shortcut method to quickly make	Feature flags
+runvil_ratio_fallback	docs-rustbook	27315	11.7	4	4	0	1		
+runvil_ratio_fallback	issue23-profile	236	0.4	3	3	0	3		
+runvil_ratio_fallback	listing-forum-latest	17429	24.8	2	2	0	3		
+runvil_ratio_fallback	listing-hn	28905	22.4	4	4	1	2		vote?id=
+runvil_ratio_fallback	listing-lobsters	20084	19.8	4	4	0	2		
+runvil_ratio_fallback	product-adafruit	4006	22.1	2	3	0	2	Raspberry Pi 5 - 8 GB RAM	
+runvil_ratio_fallback	profile-cppalliance-vinnie	1866	6.5	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+runvil_ratio_fallback	profile-github-vinnie	1958	26.0	2	3	0	4	I'm into C++ and Boost	
+runvil_ratio_fallback	repo-github-runvil	4546	48.7	3	3	0	3		
+runvil_ratio_fallback	search-ddg	10764	7.9	3	3	0	2		
+runvil_ratio_fallback	spa-cratesio-htmd	32	0.4	0	1	0	2	turndown	
+runvil_ratio_fallback	wiki-readability	81914	380.8	4	4	0	4		
+htmd_raw_page	article-npr	38998	2.4	4	4	3	3		sticker shock | American farmers are hurting | NPR does not offer
+htmd_raw_page	article-rustblog	19206	1.1	4	4	2	2		Maintained by the Rust Team | Get help!
+htmd_raw_page	docs-docsrs-reqwest	79970	2.1	4	4	3	3		Docs.rs crate page | Rust website | Feature flags
+htmd_raw_page	docs-rustbook	30163	1.0	4	4	1	1		Keyboard shortcuts
+htmd_raw_page	issue23-profile	322	0.1	3	3	3	3		.card { | featureFlags | Sign in
+htmd_raw_page	listing-forum-latest	222728	2.1	2	2	2	3		EmberENV | discourse-cdn
+htmd_raw_page	listing-hn	11805	1.2	4	4	2	2		Guidelines | vote?id=
+htmd_raw_page	listing-lobsters	20444	1.8	4	4	2	2		prefetch | eagerness
+htmd_raw_page	product-adafruit	32309	1.8	3	3	2	2		Create New Wishlist | May We Also Suggest
+htmd_raw_page	profile-cppalliance-vinnie	5847	0.5	3	3	1	1		Connect with us
+htmd_raw_page	profile-github-vinnie	25196	3.7	3	3	4	4		Navigation Menu | See all industries | featureFlags | perform that action
+htmd_raw_page	repo-github-runvil	59365	4.6	3	3	3	3		Navigation Menu | Report repository | perform that action
+htmd_raw_page	search-ddg	11526	0.7	3	3	2	2		All Regions | Argentina
+htmd_raw_page	spa-cratesio-htmd	881	0.1	0	1	2	2	turndown	sveltekit | window.onerror
+htmd_raw_page	wiki-readability	143256	6.7	4	4	4	4		Jump to content | Main page | Articles with unsourced | Add topic
+htmd_cleaned_page	article-npr	9749	2.1	4	4	3	3		sticker shock | American farmers are hurting | NPR does not offer
+htmd_cleaned_page	article-rustblog	17153	1.1	4	4	0	2		
+htmd_cleaned_page	docs-docsrs-reqwest	12677	1.7	4	4	1	3		Feature flags
+htmd_cleaned_page	docs-rustbook	28038	0.9	4	4	1	1		Keyboard shortcuts
+htmd_cleaned_page	issue23-profile	236	0.0	3	3	0	3		
+htmd_cleaned_page	listing-forum-latest	35	1.3	0	2	0	3	Forum Code Formatting and Syntax Highlighting | Custom DST	
+htmd_cleaned_page	listing-hn	11791	1.2	4	4	2	2		Guidelines | vote?id=
+htmd_cleaned_page	listing-lobsters	20084	1.8	4	4	0	2		
+htmd_cleaned_page	product-adafruit	10955	1.6	2	3	2	2	The Raspberry Pi 5 is the newest Raspberry Pi computer	Create New Wishlist | May We Also Suggest
+htmd_cleaned_page	profile-cppalliance-vinnie	3111	0.5	3	3	1	1		Connect with us
+htmd_cleaned_page	profile-github-vinnie	7487	3.5	3	3	1	4		perform that action
+htmd_cleaned_page	repo-github-runvil	13595	4.3	3	3	2	3		Report repository | perform that action
+htmd_cleaned_page	search-ddg	10764	0.7	3	3	0	2		
+htmd_cleaned_page	spa-cratesio-htmd	32	0.1	0	1	0	2	turndown	
+htmd_cleaned_page	wiki-readability	108800	6.4	4	4	3	4		Jump to content | Articles with unsourced | Add topic
+dom_smoothie	article-npr	5874	2.9	4	4	0	3		
+dom_smoothie	article-rustblog	16603	2.2	4	4	0	2		
+dom_smoothie	docs-docsrs-reqwest	13764	2.9	4	4	1	3		Feature flags
+dom_smoothie	docs-rustbook	27849	2.1	3	4	0	1	What Is Ownership	
+dom_smoothie	issue23-profile	144	0.1	1	3	0	3	Jane Doe | Turku, Finland	
+dom_smoothie	listing-forum-latest	0	2.7	0	2	0	3	Forum Code Formatting and Syntax Highlighting | Custom DST	
+dom_smoothie	listing-hn	14058	2.3	4	4	0	2		
+dom_smoothie	listing-lobsters	19257	5.7	4	4	0	2		
+dom_smoothie	product-adafruit	5470	2.4	1	3	0	2	Raspberry Pi 5 - 8 GB RAM | The Raspberry Pi 5 is the newest Raspberry Pi computer	
+dom_smoothie	profile-cppalliance-vinnie	2156	1.0	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+dom_smoothie	profile-github-vinnie	1641	4.4	2	3	0	4	I'm into C++ and Boost	
+dom_smoothie	repo-github-runvil	3567	5.5	3	3	0	3		
+dom_smoothie	search-ddg	0	2.2	0	3	0	2	Htmd: A turndown.js inspired | Low latency HTML to markdown for Rust | markdown - Rust - Docs.rs	
+dom_smoothie	spa-cratesio-htmd	0	0.2	0	1	0	2	turndown	
+dom_smoothie	wiki-readability	73986	11.8	4	4	0	4		
+dom_smoothie_gated	article-npr	5874	7.0	4	4	0	3		
+dom_smoothie_gated	article-rustblog	16603	4.2	4	4	0	2		
+dom_smoothie_gated	docs-docsrs-reqwest	13764	6.1	4	4	1	3		Feature flags
+dom_smoothie_gated	docs-rustbook	27849	3.7	3	4	0	1	What Is Ownership	
+dom_smoothie_gated	issue23-profile	236	0.1	3	3	0	3		
+dom_smoothie_gated	listing-forum-latest	35	3.3	0	2	0	3	Forum Code Formatting and Syntax Highlighting | Custom DST	
+dom_smoothie_gated	listing-hn	11791	2.1	4	4	2	2		Guidelines | vote?id=
+dom_smoothie_gated	listing-lobsters	20084	3.2	4	4	0	2		
+dom_smoothie_gated	product-adafruit	5470	5.5	1	3	0	2	Raspberry Pi 5 - 8 GB RAM | The Raspberry Pi 5 is the newest Raspberry Pi computer	
+dom_smoothie_gated	profile-cppalliance-vinnie	2156	1.9	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+dom_smoothie_gated	profile-github-vinnie	7487	11.3	3	3	1	4		perform that action
+dom_smoothie_gated	repo-github-runvil	3567	13.7	3	3	0	3		
+dom_smoothie_gated	search-ddg	10764	1.2	3	3	0	2		
+dom_smoothie_gated	spa-cratesio-htmd	32	0.2	0	1	0	2	turndown	
+dom_smoothie_gated	wiki-readability	73986	23.7	4	4	0	4		
+legible	article-npr	5902	2.7	4	4	0	3		
+legible	article-rustblog	16625	1.8	4	4	0	2		
+legible	docs-docsrs-reqwest	13897	2.3	4	4	1	3		Feature flags
+legible	docs-rustbook	0	0.8	0	4	0	1	What Is Ownership | The Stack and the Heap | Ownership Rules | Listing 4-5	
+legible	issue23-profile	146	0.1	1	3	0	3	Jane Doe | Turku, Finland	
+legible	listing-forum-latest	0	8.7	0	2	0	3	Forum Code Formatting and Syntax Highlighting | Custom DST	
+legible	listing-hn	14061	1.6	4	4	0	2		
+legible	listing-lobsters	19441	8.0	4	4	0	2		
+legible	product-adafruit	5482	2.0	2	3	0	2	Raspberry Pi 5 - 8 GB RAM	
+legible	profile-cppalliance-vinnie	2183	0.8	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+legible	profile-github-vinnie	1642	7.6	2	3	0	4	I'm into C++ and Boost	
+legible	repo-github-runvil	3516	4.9	3	3	0	3		
+legible	search-ddg	0	2.8	0	3	0	2	Htmd: A turndown.js inspired | Low latency HTML to markdown for Rust | markdown - Rust - Docs.rs	
+legible	spa-cratesio-htmd	0	0.4	0	1	0	2	turndown	
+legible	wiki-readability	73306	9.1	4	4	0	4		
+rs_trafilatura	article-npr	5008	14.8	4	4	3	3		sticker shock | American farmers are hurting | NPR does not offer
+rs_trafilatura	article-rustblog	10842	11.8	4	4	0	2		
+rs_trafilatura	docs-docsrs-reqwest	9341	15.5	4	4	1	3		Feature flags
+rs_trafilatura	docs-rustbook	22174	8.6	4	4	0	1		
+rs_trafilatura	issue23-profile	131	0.7	1	3	0	3	Jane Doe | Turku, Finland	
+rs_trafilatura	listing-forum-latest	14854	19.4	2	2	0	3		
+rs_trafilatura	listing-hn	4317	20.6	4	4	1	2		Guidelines
+rs_trafilatura	listing-lobsters	3000	23.1	4	4	0	2		
+rs_trafilatura	product-adafruit	5099	13.7	2	3	0	2	The Raspberry Pi 5 is the newest Raspberry Pi computer	
+rs_trafilatura	profile-cppalliance-vinnie	1320	4.2	2	3	0	1	Published posts	
+rs_trafilatura	profile-github-vinnie	1564	21.9	2	3	0	4	I'm into C++ and Boost	
+rs_trafilatura	repo-github-runvil	3376	28.2	3	3	0	3		
+rs_trafilatura	search-ddg	4837	10.7	3	3	0	2		
+rs_trafilatura	spa-cratesio-htmd	109	1.0	0	1	0	2	turndown	
+rs_trafilatura	wiki-readability	55638	69.9	4	4	0	4		
+rs_trafilatura_recall	article-npr	5008	14.8	4	4	3	3		sticker shock | American farmers are hurting | NPR does not offer
+rs_trafilatura_recall	article-rustblog	10842	11.8	4	4	0	2		
+rs_trafilatura_recall	docs-docsrs-reqwest	9341	15.4	4	4	1	3		Feature flags
+rs_trafilatura_recall	docs-rustbook	22174	8.6	4	4	0	1		
+rs_trafilatura_recall	issue23-profile	204	0.7	3	3	0	3		
+rs_trafilatura_recall	listing-forum-latest	14854	19.4	2	2	0	3		
+rs_trafilatura_recall	listing-hn	4317	20.6	4	4	1	2		Guidelines
+rs_trafilatura_recall	listing-lobsters	2561	20.7	4	4	0	2		
+rs_trafilatura_recall	product-adafruit	5099	13.8	2	3	0	2	The Raspberry Pi 5 is the newest Raspberry Pi computer	
+rs_trafilatura_recall	profile-cppalliance-vinnie	1320	4.2	2	3	0	1	Published posts	
+rs_trafilatura_recall	profile-github-vinnie	1564	21.9	2	3	0	4	I'm into C++ and Boost	
+rs_trafilatura_recall	repo-github-runvil	3376	28.3	3	3	0	3		
+rs_trafilatura_recall	search-ddg	4641	9.6	3	3	0	2		
+rs_trafilatura_recall	spa-cratesio-htmd	109	1.0	0	1	0	2	turndown	
+rs_trafilatura_recall	wiki-readability	55638	69.5	4	4	0	4		
+llm_readability	article-npr	5104	3.8	4	4	1	3		NPR does not offer
+llm_readability	article-rustblog	8810	5.3	4	4	0	2		
+llm_readability	docs-docsrs-reqwest	8920	4.3	3	4	1	3	Shortcut method to quickly make	Feature flags
+llm_readability	docs-rustbook	27	0.9	0	4	0	1	What Is Ownership | The Stack and the Heap | Ownership Rules | Listing 4-5	
+llm_readability	issue23-profile	250	0.1	2	3	1	3	Turku, Finland	Sign in
+llm_readability	listing-forum-latest	101	1.6	0	2	0	3	Forum Code Formatting and Syntax Highlighting | Custom DST	
+llm_readability	listing-hn	40	2.4	0	4	0	2	European Commission rolled out Matrix | Everything you need to survive | Garage Door Spam | Seven new models at scalable price-performance	
+llm_readability	listing-lobsters	37	3.5	0	4	0	2	Codeberg's domain suddenly disappeared | PostgreSQL 19 Released | custom game engine for Satelital | Type inference and narrowing with reverse arrows	
+llm_readability	product-adafruit	3484	3.2	1	3	0	2	The Raspberry Pi 5 is the newest Raspberry Pi computer | Technical Details	
+llm_readability	profile-cppalliance-vinnie	2140	1.3	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+llm_readability	profile-github-vinnie	109	3.9	1	3	1	4	I'm into C++ and Boost | Boost Library Author	perform that action
+llm_readability	repo-github-runvil	4607	8.2	1	3	0	3	Using it from a Host | Contributing	
+llm_readability	search-ddg	131	1.4	0	3	0	2	Htmd: A turndown.js inspired | Low latency HTML to markdown for Rust | markdown - Rust - Docs.rs	
+llm_readability	spa-cratesio-htmd	95	0.2	0	1	0	2	turndown	
+llm_readability	wiki-readability	82136	25.4	4	4	0	4		
+survey_design	article-npr	6360	9.9	4	4	1	3		NPR does not offer
+survey_design	article-rustblog	16707	19.7	4	4	0	2		
+survey_design	docs-docsrs-reqwest	8781	18.7	3	4	1	3	Shortcut method to quickly make	Feature flags
+survey_design	docs-rustbook	27656	10.3	4	4	0	1		
+survey_design	issue23-profile	293	0.4	3	3	1	3		Sign in
+survey_design	listing-forum-latest	0	0.8	0	2	0	3	Forum Code Formatting and Syntax Highlighting | Custom DST	
+survey_design	listing-hn	34155	22.1	4	4	1	2		vote?id=
+survey_design	listing-lobsters	20586	18.7	4	4	0	2		
+survey_design	product-adafruit	4006	18.6	2	3	0	2	Raspberry Pi 5 - 8 GB RAM	
+survey_design	profile-cppalliance-vinnie	2073	6.1	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+survey_design	profile-github-vinnie	13627	21.0	3	3	2	4		Navigation Menu | See all industries
+survey_design	repo-github-runvil	4600	38.1	3	3	0	3		
+survey_design	search-ddg	11828	7.8	3	3	2	2		All Regions | Argentina
+survey_design	spa-cratesio-htmd	0	0.1	0	1	0	2	turndown	
+survey_design	wiki-readability	82597	364.5	4	4	0	4		
+survey_design_keep_noscript	article-npr	6360	9.9	4	4	1	3		NPR does not offer
+survey_design_keep_noscript	article-rustblog	16707	19.9	4	4	0	2		
+survey_design_keep_noscript	docs-docsrs-reqwest	8781	18.9	3	4	1	3	Shortcut method to quickly make	Feature flags
+survey_design_keep_noscript	docs-rustbook	27656	10.3	4	4	0	1		
+survey_design_keep_noscript	issue23-profile	293	0.4	3	3	1	3		Sign in
+survey_design_keep_noscript	listing-forum-latest	17429	23.5	2	2	0	3		
+survey_design_keep_noscript	listing-hn	34155	22.2	4	4	1	2		vote?id=
+survey_design_keep_noscript	listing-lobsters	20586	18.7	4	4	0	2		
+survey_design_keep_noscript	product-adafruit	4006	18.6	2	3	0	2	Raspberry Pi 5 - 8 GB RAM	
+survey_design_keep_noscript	profile-cppalliance-vinnie	2073	6.1	2	3	1	1	Beast Is Accepted Into Boost	Connect with us
+survey_design_keep_noscript	profile-github-vinnie	13627	21.4	3	3	2	4		Navigation Menu | See all industries
+survey_design_keep_noscript	repo-github-runvil	4600	38.0	3	3	0	3		
+survey_design_keep_noscript	search-ddg	11828	7.9	3	3	2	2		All Regions | Argentina
+survey_design_keep_noscript	spa-cratesio-htmd	73	0.1	0	1	0	2	turndown	
+survey_design_keep_noscript	wiki-readability	82597	366.0	4	4	0	4		

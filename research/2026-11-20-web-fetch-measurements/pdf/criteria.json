@@ -1,0 +1,6 @@
+{
+ "paper-1col-attention": {"include": ["Attention Is All You Need", "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks", "Scaled Dot-Product Attention", "Multi-Head Attention", "Positional Encoding", "BLEU"]},
+ "paper-2col-bert": {"include": ["We introduce a new language representation model called BERT", "Bidirectional Encoder Representations from Transformers", "Masked LM", "pushing the GLUE score to 80.5%", "Next Sentence Prediction"]},
+ "tables-h8": {"include": ["Assets and Liabilities of Commercial Banks in the United States", "Bank credit", "Securities in bank credit", "Loans and leases in bank credit"]},
+ "tables-h41": {"include": ["Factors Affecting Reserve Balances", "Reserve Bank credit", "U.S. Treasury securities"]}
+}

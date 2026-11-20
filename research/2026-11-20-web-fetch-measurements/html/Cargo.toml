@@ -1,0 +1,18 @@
+[package]
+name = "extract-bench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dom_smoothie = "0.19.0"
+htmd = "0.6.0"
+legible = "0.5.1"
+llm_readability = "0.0.17"
+readabilityrs = "0.1.4"
+rs-trafilatura = "0.2.2"
+serde_json = "1.0.154"
+url = "2.5.8"
+lol_html = "2"
+
+# Not a member of the repository workspace.
+[workspace]

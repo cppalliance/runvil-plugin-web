@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Format
+        run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Clippy
+        env:
+          CARGO_BUILD_WARNINGS: deny
+        run: cargo clippy --locked --workspace --all-targets --all-features
+
+  # The Plugin ships as a dynamic library for each platform, so the tests,
+  # the structural checks among them, and its release build run on all
+  # three.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # The tests start servers and wait on timeouts, so one that hangs
+    # fails the job in minutes.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@4dc1969decfa71b34f25aa7f3dd4656654d9ad1e # nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Test
+        run: cargo nextest run --locked --workspace --all-features
+
+      - name: Build the library Plugin
+        run: cargo build --locked -p plugin-web --release
+
+      # A Host finds the Plugin by this one symbol, and a build without
+      # the `dll` feature would still write a library, with no export.
+      - name: The library exports runvil_plugin
+        if: runner.os == 'Linux'
+        run: nm -D --defined-only target/release/libplugin_web.so | grep -qw runvil_plugin
+
+      # No build or test step may write into the repository; catch a
+      # regression here rather than in a diff.
+      - name: Clean tree
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "the build dirtied the repository:"
+            git status --porcelain
+            exit 1
+          fi
+
+  docs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # Almost every item is private, so rustdoc checks their docs only
+      # with `--document-private-items`.
+      - name: Docs
+        run: cargo doc --locked --workspace --no-deps --all-features --document-private-items
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
+        with:
+          tool: cargo-deny, cargo-audit
+
+      - name: cargo deny
+        run: cargo deny check
+
+      - name: cargo audit
+        run: cargo audit
+
+      # The library Plugin links exactly one rustls crypto backend,
+      # aws-lc-rs. This fails when `ring` enters the workspace's
+      # normal-edge graph (through a reqwest bump) and when `cargo tree`
+      # itself cannot run. It passes when `ring` is outside that graph,
+      # and when the lockfile does not hold it at all.
+      - name: One rustls crypto backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! out="$(cargo tree --locked --workspace -e normal -i ring --depth 0 2>&1)"; then
+            if printf '%s\n' "$out" | grep -q 'did not match any packages'; then
+              echo "ring is not in the lockfile"
+              exit 0
+            fi
+            echo "cargo tree failed:"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+          if printf '%s\n' "$out" | grep -v '^warning: nothing to print' | grep -q '^ring v'; then
+            echo "ring is in the workspace's normal dependency graph; aws-lc-rs is the only permitted rustls backend"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+
+  # The custom lints, the dylint library in cppalliance/dylints at the
+  # rev the root Cargo.toml's [workspace.metadata.dylint] pins. `cargo
+  # dylint` fetches it and builds it on the nightly in its
+  # rust-toolchain.toml, which rustup installs with that file's components;
+  # the date is never repeated here. Its UI tests run in its own CI.
+  # It runs on 24.04: the prebuilt cargo-dylint and dylint-link binaries
+  # need glibc 2.38 or later.
+  dylint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same release as the `dylint_linting` the library depends on.
+      - name: Install cargo-dylint and dylint-link
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
+        with:
+          tool: cargo-dylint@6.3.2, dylint-link@6.3.2
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Dylint
+        run: cargo dylint --all -- --locked --workspace --all-targets --all-features
+
+  # Single required status check for branch protection: it fails when any
+  # job fails or is cancelled, so a cancelled job cannot read as green.
+  # needs: is a static list, so every newly added job must be added to it
+  # or that job bypasses this gate.
+  ci-green:
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy, test, docs, supply-chain, dylint]
+    if: always()
+    steps:
+      - name: Verify every job succeeded
+        shell: bash
+        run: |
+          status=0
+          for result in ${{ join(needs.*.result, ' ') }}; do
+            if [ "$result" != "success" ]; then
+              echo "a required job did not succeed: $result"
+              status=1
+            fi
+          done
+          exit $status

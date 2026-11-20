@@ -1,0 +1,17 @@
+method	pdf	ok	chars	ms	phrase_hit	phrase_total	missing
+pdf_oxide	paper-1col-attention	ok	42180	185	6	6	
+pdf_oxide	paper-2col-bert	ok	68023	164	4	5	We introduce a new language representation model called BERT
+pdf_oxide	tables-h41	ok	31968	67	3	3	
+pdf_oxide	tables-h8	ok	66159	181	4	4	
+unpdf	paper-1col-attention	ok	41488	83	6	6	
+unpdf	paper-2col-bert	ok	67923	55	3	5	We introduce a new language representation model called BERT | Bidirectional Encoder Representations from Transformers
+unpdf	tables-h41	ok	26662	20	3	3	
+unpdf	tables-h8	ok	86990	52	4	4	
+pdf_extract	paper-1col-attention	ok	39544	185	6	6	
+pdf_extract	paper-2col-bert	ok	64499	87	4	5	We introduce a new language representation model called BERT
+pdf_extract	tables-h41	ok	27779	21	3	3	
+pdf_extract	tables-h8	ok	64515	72	4	4	
+oxidize_pdf	paper-1col-attention	ok	39647	123	6	6	
+oxidize_pdf	paper-2col-bert	ok	63934	33	5	5	
+oxidize_pdf	tables-h41	ok	25205	13	3	3	
+oxidize_pdf	tables-h8	ok	64684	25	4	4	

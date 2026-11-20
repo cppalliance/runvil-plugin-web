@@ -781,3 +781,37 @@ Each repo's checks are the Verification list in its own `AGENTS.md`.
 - **A separate Gateway key for each feature.** Every entry holds the Gateway's one bearer key.
 - **The search tool's argument rules.** They are looser than the Gateway's in a few places: country and language codes, and the shape of a domain entry. A value the tool accepts and the Gateway refuses comes back as a 400 from the Gateway. They move as they are.
 - **File futures inside sets that poll a child only when it was woken.** Section 9 writes the limit down and changes nothing.
+
+## What the build found
+
+The design held. These points differ from the plan above, and the last one lists the commits.
+
+The SDK:
+
+- **The SDK wakes a call only when the Host refused a file request.** `send` in `Requests` reports the refusal, and `step` wakes the call then. The plan also woke a call whose step left a file answer untaken with no request at the Host. Under that rule, a tool that starts a read and awaits something else first is woken at every step while the answer waits, so its call spins. As built, that call stays parked until the other future wakes it, and the read takes its answer then.
+
+The web Plugin:
+
+- **An HTML page renders on a blocking thread of the Plugin's runtime**, in a commit of its own, `faa1a8b`. In the plan a fetch is one task on the runtime's two worker threads, so a page would render on one of them. There, three large pages that rendered at the same time delayed a small fetch to 1.5 seconds. A rendering that has started runs to its end after its call is dropped, and the runtime's drop waits for it. The rest of a fetch is aborted with its call, as in the plan.
+- **The table of blocked networks is a `const` in `address.rs`**, `BLOCKED_NETS`. The plan moves the parsed table into `FetchConfig`, and that struct already has 12 named fields, the limit of this repository's type-size check. A `const` table is built when the library compiles, so a load parses nothing and the table goes away with the library at unload.
+- **The Pack has one message that the plan does not list**: `web: the call's arguments are not valid JSON`, as invalid arguments. A library Plugin receives a call's arguments as JSON text and parses it. The Harness sends the text of a value it holds, so only another Host can send text that fails to parse.
+
+`runvil`:
+
+- **`runvil` has two commits where the plan has one.** The added one, `9e9b7a991`, takes `plugin-web` out of `RUSTDOC_SITES`. The docs site documents each harness crate that the list names, so its build fails on a crate that the harness has dropped.
+- **The commit that moves the Workshop pin and adds web to the installer checks waits on a fork.** Release 0.3.1 pins a Workshop commit from before this work, so the pin moves once that release is settled.
+
+The check at the end:
+
+- **A stand-in Host ran the search and the fetch.** It is a small program over the same loader, the same call to `provide_gateway_resources`, and the three libraries that Workshop built. The plan has an agent in Workshop make both calls. An agent in the Workshop app has yet to make them through a model.
+- **With the Gateway stopped, the search failed at once** with `web_search: the host offers no web search right now`. The plan expects a transport error in the first five seconds after the Gateway stops, and that message afterwards. The check did not show the five seconds, because the stand-in reads the Gateway's discovery file as each call starts.
+- **A `sleep` in a pipeline is stepped at the timer's rate only while its command waits on a pipe beside commands that run with it.** For `{ sleep 3; echo x; } | cat` the stand-in polled the run about 120 times a second. In `sleep 3 | cat` the two commands run one after the other, so the call parked for the whole `sleep`, and the stand-in polled the run 3 times in all. The plan says that a `sleep` in any pipeline is stepped about 100 times a second. The docs in `lib.rs` of the bashkit Plugin state the built rule.
+
+Documents:
+
+- **The guide changed in four chapters, where the plan names three.** The row for `web/search` in chapter 17 said that `count` has the search provider's default, and it now says the Gateway's default.
+- **The Workshop design page is unchanged.** It is in `runvil-design`, which is retired.
+
+Commits:
+
+- **Each commit is on `master` of its `cppalliance` repository.** `runvil-plugin-api` has `a3a8ff8` and `74f9e08`. This repository has the 127 commits of history, then `ab83724` through `afc7f54`. `runvil-harness` has `c0f059b2`, `861f6040`, `e5e489a0`, and `f75aadb2`. `runvil-plugin-std` has `0eda071`, `runvil-plugin-bashkit` has `5afe8ff`, `runvil-workshop` has `68c72495`, `runvil-docs` has `ae2213c`, `runvil-classroom` has `6e4882c`, and `runvil` has `9e9b7a991`.

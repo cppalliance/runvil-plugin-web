@@ -1,40 +1,40 @@
 [package]
 name = "plugin-web"
-version.workspace = true
+version = "0.1.0"
+description = "The web Plugin for runvil: a tool that fetches a page from the web"
 edition.workspace = true
 license.workspace = true
-repository.workspace = true
 publish = false
 
+# A dynamic library for a Host's Plugin directory, and an rlib, so a Host
+# can also link the Plugin in with `dll` off.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
-# The Plugin contract: `PackInfo`, the Pack trait, the context a
-# call is lent, and the tool, error, and service vocabulary.
-runvil-plugin.workspace = true
-# `SearchProvider` is an `async_trait` trait.
-async-trait.workspace = true
-serde.workspace = true
+# The Plugin contract's safe layer: the `Plugin` and `Pack` traits, what a
+# tool call is lent, and the entry point.
+runvil-plugin-sdk.workspace = true
+# The HTTP client every fetch goes through.
+reqwest.workspace = true
+# The runtime that runs every request.
+tokio.workspace = true
+# A call's arguments arrive as JSON text, and the tool's parameter schema
+# is JSON.
 serde_json.workspace = true
-reqwest = { workspace = true, features = ["gzip", "brotli"] }
-readabilityrs.workspace = true
-htmd.workspace = true
-mime.workspace = true
-encoding_rs.workspace = true
-url.workspace = true
-ipnet.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-# The Host's runtime handle every fetch is spawned onto.
-tokio = { workspace = true }
 
 [dev-dependencies]
-axum.workspace = true
-flate2.workspace = true
-futures-util.workspace = true
-# `testing::TestCall`, which lends the Pack a context without a Harness.
-runvil-plugin = { workspace = true, features = ["test-support"] }
-# `io-util` is the `AsyncReadExt`/`AsyncWriteExt` the raw TCP mock reads
-# its request and watches for the client's hang-up with.
-tokio = { workspace = true, features = ["io-util"] }
+# `testing`, the fake Host, which the tests and the example load the
+# Plugin through.
+runvil-plugin-sdk = { workspace = true, features = ["test-support"] }
+# Opens the built library in the example.
+libloading.workspace = true
+
+[features]
+default = ["dll"]
+# Exports `runvil_plugin`. A Host that links this crate in turns it off,
+# because two linked Plugins exporting the symbol cannot share one binary.
+dll = []
 
 [lints]
 workspace = true

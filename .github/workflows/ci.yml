@@ -64,6 +64,11 @@ jobs:
         if: runner.os == 'Linux'
         run: nm -D --defined-only target/release/libplugin_web.so | grep -qw runvil_plugin
 
+      # The example loads the built library and fetches a page with it.
+      # It needs the network, so it is run by hand and only built here.
+      - name: Build the example
+        run: cargo build --locked -p plugin-web --release --example load-dll
+
       # No build or test step may write into the repository; catch a
       # regression here rather than in a diff.
       - name: Clean tree

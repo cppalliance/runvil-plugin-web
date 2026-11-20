@@ -5,24 +5,24 @@
 //! the timeouts, the body read, and the content-type and decoding refusals. It
 //! is never public; `call` maps it to a narrow tool error
 //! through [`FetchError::classify`]. It provides a model-facing rendering
-//! that withholds internal detail, and preserves dependency and I/O causes
-//! behind `#[source]` fields so a log can inspect the chain.
+//! that withholds internal detail, and keeps dependency and I/O causes
+//! behind `#[source]` fields, which neither rendering prints.
 
 use std::net::IpAddr;
 
-use runvil_plugin::ErrorCode;
+use runvil_plugin_sdk::ToolErrorKind;
 
 /// How `call` should treat a [`FetchError`].
 ///
 /// A [`Disposition::SoftOutput`] error is returned to the model as untrusted
 /// tool text so it can try a different URL; a [`Disposition::Hard`] error aborts
-/// the call with the given [`ErrorCode`].
+/// the call with the given [`ToolErrorKind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Disposition {
     /// Returns the model-facing text as untrusted tool output.
     SoftOutput,
-    /// Aborts the call with this error code.
-    Hard(ErrorCode),
+    /// Aborts the call as a failure of this kind.
+    Hard(ToolErrorKind),
 }
 
 /// A URL stored for diagnostics with its secrets redacted.
@@ -33,6 +33,8 @@ pub(crate) enum Disposition {
 /// [`FetchError`] holding a `SafeUrl` are secret-free regardless of the call
 /// site, so a `?secret=...` query in a fetched URL never reaches a log, a Debug
 /// dump, or the model-facing error text.
+///
+/// [`Display`]: std::fmt::Display
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SafeUrl(String);
 
@@ -69,9 +71,9 @@ impl std::fmt::Display for SafeUrl {
 
 /// An error produced while fetching a URL.
 ///
-/// The [`Display`](std::fmt::Display) rendering is the log text; the
+/// The [`Display`](std::fmt::Display) rendering is the full text; the
 /// [`FetchError::model_facing`] rendering is what a model should see. They
-/// diverge for [`FetchError::BlockedAddress`], whose log text names the resolved
+/// diverge for [`FetchError::BlockedAddress`], whose full text names the resolved
 /// address and the range that blocked it while its model-facing text says only
 /// that the host is not fetchable. Dependency and I/O causes live behind
 /// `#[source]` fields and are never rendered in `Display`, so the printed chain
@@ -102,7 +104,7 @@ pub(crate) enum FetchError {
     /// A host (or admitted IP literal) resolved to a blocked address.
     ///
     /// The full [`Display`](std::fmt::Display) names the host, the resolved
-    /// address, and the range, for the log. [`FetchError::model_facing`] omits
+    /// address, and the range. [`FetchError::model_facing`] omits
     /// the address and range so no internal topology reaches the model.
     #[error("host {host} resolved to blocked address {addr} in range {range}")]
     BlockedAddress {
@@ -250,7 +252,7 @@ impl FetchError {
             | FetchError::IpLiteral(_)
             | FetchError::BlockedAddress { .. }
             | FetchError::NoAllowedAddress { .. } => {
-                Disposition::Hard(ErrorCode::ToolInvalidArguments)
+                Disposition::Hard(ToolErrorKind::InvalidArguments)
             }
         }
     }
@@ -261,7 +263,7 @@ mod tests {
     use std::error::Error as _;
     use std::net::IpAddr;
 
-    use runvil_plugin::ErrorCode;
+    use runvil_plugin_sdk::ToolErrorKind;
 
     use super::{Disposition, FetchError, SafeUrl};
 
@@ -365,7 +367,7 @@ mod tests {
         for err in &hard {
             assert_eq!(
                 err.classify(),
-                Disposition::Hard(ErrorCode::ToolInvalidArguments),
+                Disposition::Hard(ToolErrorKind::InvalidArguments),
                 "{err} must be hard invalid-arguments"
             );
         }

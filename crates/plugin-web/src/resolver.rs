@@ -14,9 +14,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use runvil_plugin::BoxFuture;
+use runvil_plugin_sdk::BoxFuture;
 
-use crate::address::{addr_allowed_for_host, blocked_range};
+use crate::address::addr_allowed_for_host;
 use crate::config::FetchConfig;
 use crate::error::FetchError;
 
@@ -54,9 +54,9 @@ impl Lookup for SystemLookup {
 
 /// A guarded DNS resolver that filters answers through [`addr_allowed_for_host`].
 ///
-/// Construct the production resolver with [`GuardedResolver::system`], or wrap
-/// any [`Lookup`] with [`GuardedResolver::new`]. The policy is held behind an
-/// [`Arc`] so each resolving future clones only a pointer.
+/// Construct the production resolver with [`GuardedResolver::system`], or, in a
+/// test, wrap any [`Lookup`] with `GuardedResolver::new`. The policy is held
+/// behind an [`Arc`] so each resolving future clones only a pointer.
 #[derive(Debug, Clone)]
 pub(crate) struct GuardedResolver<L = SystemLookup> {
     /// The underlying host-to-address lookup.
@@ -88,31 +88,19 @@ impl<L: Lookup> GuardedResolver<L> {
 
     /// Filters `addrs` for `host` through the address policy.
     ///
-    /// Returns the allowed addresses, logging each dropped address at debug
-    /// level with its blocking range. Returns [`FetchError::NoAllowedAddress`]
-    /// when nothing survives.
+    /// Returns the allowed addresses and drops every other one. Returns
+    /// [`FetchError::NoAllowedAddress`] when nothing survives, which names the
+    /// host and neither a dropped address nor the range that blocks it, so the
+    /// model never sees either.
     fn filter(
         host: &str,
         addrs: Vec<SocketAddr>,
         config: &FetchConfig,
     ) -> Result<Vec<SocketAddr>, FetchError> {
-        let mut allowed = Vec::new();
-        for sa in addrs {
-            let ip = sa.ip();
-            if addr_allowed_for_host(host, ip, config) {
-                allowed.push(sa);
-            } else if let Some(range) = blocked_range(ip, config) {
-                // Full detail goes to the log; the model never sees it.
-                tracing::debug!(
-                    "{}",
-                    FetchError::BlockedAddress {
-                        host: host.to_string(),
-                        addr: ip,
-                        range,
-                    }
-                );
-            }
-        }
+        let allowed: Vec<SocketAddr> = addrs
+            .into_iter()
+            .filter(|sa| addr_allowed_for_host(host, sa.ip(), config))
+            .collect();
         if allowed.is_empty() {
             return Err(FetchError::NoAllowedAddress {
                 host: host.to_string(),
@@ -149,7 +137,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use reqwest::dns::{Name, Resolve};
-    use runvil_plugin::BoxFuture;
+    use runvil_plugin_sdk::BoxFuture;
 
     use super::{GuardedResolver, Lookup, SystemLookup};
     use crate::config::FetchConfig;

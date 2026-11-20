@@ -21,7 +21,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use runvil_plugin::BoxFuture;
+use runvil_plugin_sdk::BoxFuture;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::runtime::Handle;
 
@@ -92,9 +92,17 @@ fn on_this_runtime(client: &FetchClient) -> WebFetch {
     client.tool(Handle::current())
 }
 
+/// Builds a `WebFetch` over the default policy, the one the Plugin loads
+/// with, on the test's runtime.
+fn default_tool() -> WebFetch {
+    on_this_runtime(
+        &FetchClient::try_with_config(FetchConfig::default()).expect("the default client builds"),
+    )
+}
+
 #[tokio::test]
 async fn the_description_and_schema_are_stable_and_faithful() {
-    let tool = on_this_runtime(&FetchClient::new());
+    let tool = default_tool();
 
     assert_eq!(
         tool.description(),

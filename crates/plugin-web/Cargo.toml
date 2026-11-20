@@ -17,11 +17,24 @@ crate-type = ["cdylib", "rlib"]
 runvil-plugin-sdk.workspace = true
 # The HTTP client every fetch goes through.
 reqwest.workspace = true
-# The runtime that runs every request.
+# The runtime that runs every fetch.
 tokio.workspace = true
 # A call's arguments arrive as JSON text, and the tool's parameter schema
 # is JSON.
 serde_json.workspace = true
+# The fetch policy: `url` parses the URL a call names, and `ipnet` holds
+# the ranges of addresses a fetch never reaches.
+url.workspace = true
+ipnet.workspace = true
+# The rendering of a response: `mime` reads its content type,
+# `encoding_rs` decodes its body, `readabilityrs` picks the article out of
+# an HTML page, and `htmd` renders HTML to markdown.
+mime.workspace = true
+encoding_rs.workspace = true
+readabilityrs.workspace = true
+htmd.workspace = true
+# Derives the fetch tool's error types.
+thiserror.workspace = true
 
 [dev-dependencies]
 # `testing`, the fake Host, which the tests and the example load the
@@ -29,6 +42,18 @@ serde_json.workspace = true
 runvil-plugin-sdk = { workspace = true, features = ["test-support"] }
 # Opens the built library in the example.
 libloading.workspace = true
+# The mock servers the fetch tool's tests send real requests to.
+axum.workspace = true
+# The gzip body one of those servers answers with.
+flate2.workspace = true
+# The bodies those servers stream: one that never ends, and one that
+# fails midway.
+futures-util.workspace = true
+# The fetch tool's own tests run it on the runtime of a `#[tokio::test]`.
+# `macros` is that attribute and `select!`, `io-util` reads and writes the
+# socket of a mock that speaks raw TCP, and `sync` is the channel such a
+# mock reports through.
+tokio = { workspace = true, features = ["macros", "io-util", "sync"] }
 
 [features]
 default = ["dll"]

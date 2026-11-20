@@ -1,236 +1,546 @@
-//! Tests for the `web` Pack's `PackInfo`, `install`, and factory: the
-//! Pack `install` inserts, the configuration it accepts and the Host-wide
-//! services it reads, the tools the factory names under the Pack id it
-//! receives, the custom fetch policy, and how a call dispatches: to the
-//! tool its last segment names, or failing on a tool it lacks.
+//! Tests for the Plugin and its Pack: the Plugin loads and names itself,
+//! the causes a refused load names, the Pack it inserts, the tool an
+//! instance lists and the fetch tool's schema, the calls the tool refuses
+//! before any request is sent, a fetch from a server on this machine, the
+//! abort of a dropped call's fetch, and the threads the instance leaves
+//! behind when it is dropped, which are none.
+//!
+//! The tests of the Pack and its calls go through the SDK's fake Host.
+//! Every test is a plain `#[test]` with no tokio runtime of its own. So a
+//! fetch can only have run on the Plugin's runtime, and the Plugin is
+//! dropped outside an async context, as a Host drops it. A server that a
+//! test fetches from runs on a thread the test owns.
 
+use std::cell::RefCell;
+use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::Duration;
 
-use runvil_plugin::testing::TestCall;
-use runvil_plugin::{
-    Error, ErrorCode, ErrorFact, HostServices, Pack, PackFactory, PackId, PackRegistry, ServiceKey,
-    TOKIO_RUNTIME, ToolId,
-};
+use runvil_plugin_sdk::sys::RV_OK;
+use runvil_plugin_sdk::testing::{self, Loaded, PackRun};
+use runvil_plugin_sdk::{Pack, PackInfo, Plugin, Refusal, ToolError, ToolErrorKind, ToolOutput};
 use serde_json::{Value, json};
-use tokio::runtime::Handle;
 
-use super::{SEARCH_PROVIDER, WEB, Web, install};
+use super::{Web, chain};
 use crate::config::FetchConfig;
-use crate::fetch::FetchClient;
-use crate::provider::{SearchError, SearchProvider, SearchQuery, SearchResults};
-use crate::search::WebSearch;
 
-/// The key a Host provides its runtime under, built from the Plugin
-/// contract's name.
-const RUNTIME: ServiceKey<Handle> = ServiceKey::new(TOKIO_RUNTIME);
+/// The name the Plugin inserts its Pack under.
+const PACK: &str = "runvil/web";
 
-/// A provider that finds nothing.
-struct NoResults;
+/// How long a test waits for a server or a thread to report. A report
+/// that is coming comes far sooner. It is shorter than the 20 seconds a
+/// request has under either policy, so a connection that closes within it
+/// was not closed by that timeout.
+const WAIT: Duration = Duration::from_secs(10);
 
-#[async_trait::async_trait]
-impl SearchProvider for NoResults {
-    async fn search(&self, query: SearchQuery) -> Result<SearchResults, SearchError> {
-        Ok(SearchResults {
-            query: query.query,
-            results: Vec::new(),
-        })
+/// The ceiling on returned text under [`loopback_policy`]. It differs
+/// from the default policy's 40,000, so a schema shows which policy its
+/// instance enforces.
+const LOOPBACK_MAX_CHARS: usize = 10_000;
+
+/// A page whose article is long enough for extraction to keep it.
+const ARTICLE: &str = r"
+    <html><body>
+      <article>
+        <h1>Loopback Test Article</h1>
+        <p>This is the first substantial paragraph of a loopback test page,
+           deliberately long enough to be treated as real article content.</p>
+        <p>A second paragraph continues the prose so the extractor keeps the
+           body and the character count stays comfortably above threshold.</p>
+      </article>
+    </body></html>
+";
+
+/// The Plugin, loaded as the Harness loads it.
+fn loaded() -> Loaded {
+    testing::load::<Web>().expect("the Plugin loads")
+}
+
+/// The web Plugin over [`loopback_policy`] in place of the default
+/// policy, so that a test can fetch from a server on this machine. Only a
+/// test can make one: the Plugin a Host loads is [`Web`], over the default
+/// policy.
+struct Loopback(Web);
+
+impl Plugin for Loopback {
+    const NAME: &'static str = Web::NAME;
+    const VERSION: &'static str = Web::VERSION;
+    const PACKS: &'static [PackInfo] = Web::PACKS;
+
+    fn load() -> Result<Loopback, Refusal> {
+        Web::with_fetch_config(loopback_policy()).map(Loopback)
+    }
+
+    fn new_pack(&self, pack: &str) -> Result<Box<dyn Pack>, Refusal> {
+        self.0.new_pack(pack)
     }
 }
 
-/// Host-wide services holding the search provider and this runtime's
-/// handle as each flag says.
-fn services_with(provider: bool, runtime: bool) -> HostServices {
-    let mut host = HostServices::new();
-    if provider {
-        host.provide(&SEARCH_PROVIDER, Arc::new(NoResults))
-            .expect("an empty map takes the provider");
+/// A policy that reaches a server on this machine: it allows plain
+/// `http`, and `localhost` at the loopback address. It allows every port,
+/// because the system picks the port of a test's server, and a load takes
+/// no argument that could name it.
+fn loopback_policy() -> FetchConfig {
+    FetchConfig::builder()
+        .allow_http(true)
+        .allow_ports(1..=u16::MAX)
+        .allow_host_address("localhost", IpAddr::V4(Ipv4Addr::LOCALHOST))
+        .max_chars(LOOPBACK_MAX_CHARS)
+        .build()
+        .expect("the loopback policy is valid")
+}
+
+/// The Plugin over [`loopback_policy`], loaded as the Harness loads it.
+fn loaded_for_loopback() -> Loaded {
+    testing::load::<Loopback>().expect("the Plugin loads")
+}
+
+/// Runs one `fetch` call for `url` on `pack` to its end, as the Harness
+/// does.
+fn fetch(pack: &PackRun<'_>, url: &str) -> Result<ToolOutput, ToolError> {
+    pack.call("fetch", &json!({ "url": url }).to_string())
+        .expect("the call follows the contract")
+}
+
+/// The parameter schema of the one tool `pack` lists.
+fn schema(pack: &PackRun<'_>) -> Value {
+    serde_json::from_str(&pack.tools()[0].parameters).expect("the schema is JSON")
+}
+
+/// What a served connection does once the request has arrived.
+enum Reply {
+    /// Answers an HTML page with this status and this body, then closes.
+    Page(&'static str, &'static str),
+    /// Closes without an answer.
+    Nothing,
+    /// Stays open until the client closes the connection.
+    Hold,
+}
+
+/// What a served connection reports.
+#[derive(Debug, PartialEq, Eq)]
+enum Event {
+    /// The request has arrived.
+    Requested,
+    /// The client has closed a connection that was held open.
+    Closed,
+}
+
+/// Serves one connection on a loopback port, on a thread of its own.
+/// Returns the URL of that port under the host name `localhost`, which
+/// [`loopback_policy`] allows, and what the connection reports.
+fn serve(reply: Reply) -> (String, Receiver<Event>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port binds");
+    let port = listener
+        .local_addr()
+        .expect("the listener has an address")
+        .port();
+    let (report, events) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("the fetch connects");
+        read_request(&mut socket);
+        let _ = report.send(Event::Requested);
+        match reply {
+            Reply::Page(status, body) => {
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(head.as_bytes());
+                let _ = socket.write_all(body.as_bytes());
+            }
+            Reply::Nothing => {}
+            Reply::Hold => {
+                let mut buffer = [0; 1024];
+                while socket.read(&mut buffer).is_ok_and(|read| read > 0) {}
+                let _ = report.send(Event::Closed);
+            }
+        }
+    });
+    (format!("http://localhost:{port}/"), events)
+}
+
+/// Reads `socket` to the blank line that ends the head of a request.
+fn read_request(socket: &mut TcpStream) {
+    let mut request = Vec::new();
+    let mut buffer = [0; 1024];
+    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+        let read = socket.read(&mut buffer).expect("the request arrives");
+        assert!(read > 0, "the connection closed before the request ended");
+        request.extend_from_slice(&buffer[..read]);
     }
-    if runtime {
-        host.provide(&RUNTIME, Arc::new(Handle::current()))
-            .expect("an empty map takes the runtime");
-    }
-    host
-}
-
-fn name(text: &str) -> PackId {
-    PackId::parse(text).expect("a one-segment Pack id parses")
-}
-
-/// A factory or the reason its Pack was inserted unavailable.
-type Inserted = Result<Arc<dyn PackFactory>, Error>;
-
-/// The built-ins every fresh registry holds, which `install` does not
-/// insert.
-const BUILTINS: [&str; 2] = ["runvil/subagents", "runvil/user"];
-
-/// Each Pack `install` inserts into a fresh registry with `config` and the
-/// Host-wide `services`, beside its Pack id and its factory or the reason
-/// it was inserted unavailable.
-fn inserted(config: Value, services: &HostServices) -> Vec<(&'static str, PackId, Inserted)> {
-    let mut packs = PackRegistry::new();
-    install(&mut packs, config, services).expect("a registry without web takes it");
-    packs
-        .into_entries()
-        .filter(|(info, _, _)| !BUILTINS.contains(&info.fqn))
-        .map(|(info, id, factory)| (info.fqn, id, factory))
-        .collect()
-}
-
-/// The reason `install` with `config` and `services` inserts the Pack
-/// unavailable, or `None` when it inserts it usable.
-fn reason(config: Value, services: &HostServices) -> Option<String> {
-    let mut inserted = inserted(config, services);
-    let (_fqn, _id, factory) = inserted.pop().expect("install inserts one Pack");
-    factory.err().map(|error| error.to_string())
-}
-
-/// The Pack made under the Pack id `id` by the factory `install` inserts
-/// with both services.
-fn made(id: &str) -> Arc<dyn Pack> {
-    let mut inserted = inserted(Value::Null, &services_with(true, true));
-    let (_fqn, _id, factory) = inserted.pop().expect("install inserts one Pack");
-    factory
-        .expect("install inserts web usable with both services")
-        .new_pack(&name(id))
-        .expect("the factory makes the Pack")
 }
 
 #[test]
-fn the_pack_is_runvil_web_with_no_prelude() {
-    assert_eq!(WEB.fqn, "runvil/web");
-    assert!(WEB.prelude.is_none());
+fn the_plugin_loads_as_web_at_its_version_and_unloads() {
+    let loaded = loaded();
+    assert_eq!(loaded.name(), "web");
+    assert_eq!(loaded.version(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(loaded.unload(), RV_OK);
 }
 
-#[tokio::test]
-async fn install_adds_the_web_pack_usable_when_its_config_is_null_or_an_empty_object() {
-    for config in [
-        json!({ "web": {}, "mcp": { "docs": {} } }),
-        json!({ "mcp": {} }),
-        Value::Null,
-    ] {
-        let read: Vec<(&str, PackId, bool)> = inserted(config.clone(), &services_with(true, true))
-            .into_iter()
-            .map(|(fqn, id, factory)| (fqn, id, factory.is_ok()))
-            .collect();
-        assert_eq!(read, [("runvil/web", name("web"), true)], "{config}");
-    }
+/// A cause, as an error keeps one behind its own text.
+#[derive(Debug, thiserror::Error)]
+#[error("the TLS backend did not start")]
+struct Cause;
+
+/// An error whose text holds none of its cause's.
+#[derive(Debug, thiserror::Error)]
+#[error("the client was not built")]
+struct Silent(#[source] Cause);
+
+/// An error whose text ends with its cause's already.
+#[derive(Debug, thiserror::Error)]
+#[error("the client was not built: {0}")]
+struct Echoing(#[source] Cause);
+
+/// A refused load's reason ends with the text of [`chain`], which is all
+/// a Host learns of why the fetch client was not built.
+#[test]
+fn the_reason_of_a_refused_load_names_each_cause_of_its_error_once() {
+    let reason = "the client was not built: the TLS backend did not start";
+    assert_eq!(chain(&Silent(Cause)), reason);
+    assert_eq!(chain(&Echoing(Cause)), reason);
 }
 
-#[tokio::test]
-async fn install_adds_the_web_pack_unavailable_for_any_other_configuration() {
-    for config in [json!({ "max_chars": 10 }), json!([]), json!("web")] {
-        assert_eq!(
-            reason(json!({ "web": config }), &services_with(true, true)),
-            Some("web takes no configuration".to_owned()),
-            "{config}"
-        );
-    }
+#[test]
+fn the_plugin_inserts_the_one_pack_runvil_web() {
+    let loaded = loaded();
+    let packs: Vec<(&str, &str)> = loaded
+        .packs()
+        .iter()
+        .map(|pack| (pack.name.as_str(), pack.description.as_str()))
+        .collect();
+    assert_eq!(packs, [(PACK, "Fetch pages from the web")]);
 }
 
-#[tokio::test]
-async fn install_without_a_host_wide_service_adds_the_web_pack_unavailable_naming_it() {
-    assert_eq!(
-        reason(Value::Null, &services_with(false, true)),
-        Some("web needs runvil/search-provider, and this host provides none".to_owned())
-    );
-    assert_eq!(
-        reason(Value::Null, &services_with(true, false)),
-        Some("web needs runvil/tokio-runtime, and this host provides none".to_owned())
-    );
-}
-
-#[tokio::test]
-async fn install_returns_the_registrys_refusal() {
-    let mut packs = PackRegistry::new();
-    let services = services_with(true, true);
-    install(&mut packs, Value::Null, &services).expect("the first install inserts web");
-    let error =
-        install(&mut packs, Value::Null, &services).expect_err("a second install is refused");
-    assert_eq!(error.code, ErrorCode::InvalidValue);
-    assert_eq!(
-        error.facts.get(&ErrorFact::Reason),
-        Some(&Value::from("duplicate_pack"))
-    );
-    assert_eq!(
-        error.facts.get(&ErrorFact::Name),
-        Some(&Value::from("runvil/web"))
-    );
-}
-
-#[tokio::test]
-async fn the_factory_names_both_tools_under_the_pack_id_it_receives() {
-    let tools = made("browse").tools();
-    let ids: Vec<String> = tools.iter().map(|tool| tool.id.to_string()).collect();
-    assert_eq!(ids, ["browse/fetch", "browse/search"]);
-    assert!(tools.iter().all(|tool| !tool.survives_stop));
-}
-
-#[tokio::test]
-async fn a_custom_fetch_policy_reaches_the_fetch_tools_schema() {
-    let id = name("web");
-    let web = Web::new(
-        &id,
-        FetchClient::new().tool(Handle::current()),
-        WebSearch::new(Arc::new(NoResults)),
-    )
-    .expect("the tool ids parse");
-    let policy = FetchConfig::builder()
-        .max_chars(10_000)
-        .build()
-        .expect("valid policy");
-    let web = web
-        .with_fetch_config(&id, Handle::current(), policy)
-        .expect("the custom policy builds a fetch client");
-    let fetch = web
+#[test]
+fn an_instance_lists_the_one_tool_fetch_under_the_name_the_host_derives() {
+    let loaded = loaded();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    let tools: Vec<(&str, Option<&str>, &str, bool)> = pack
         .tools()
-        .into_iter()
-        .find(|tool| tool.id.to_string() == "web/fetch")
-        .expect("the fetch tool is offered");
+        .iter()
+        .map(|tool| {
+            (
+                tool.name.as_str(),
+                tool.wire_name.as_deref(),
+                tool.description.as_str(),
+                tool.changes_files,
+            )
+        })
+        .collect();
+    // No wire name is set, so the Host derives `web_fetch` from the
+    // tool's id, `web/fetch`.
     assert_eq!(
-        fetch.parameters_schema["properties"]["max_chars"]["maximum"], 10_000,
+        tools,
+        [(
+            "fetch",
+            None,
+            "Fetch a web page and return its main content as markdown.",
+            false
+        )]
+    );
+}
+
+/// The whole schema, word for word, because a model reads every
+/// description in it.
+#[test]
+fn the_fetch_tools_schema_is_the_one_a_model_reads_under_the_default_policy() {
+    let loaded = loaded();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    assert_eq!(
+        schema(&pack),
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch."
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 40_000,
+                    "description": "Maximum number of characters of text to return for this call. Clamped to the configured ceiling. Longer text is truncated on a character boundary and the result is flagged as truncated."
+                },
+                "raw": {
+                    "type": "boolean",
+                    "description": "Skip article extraction and render the whole HTML document. Use for a page that is mostly a table or list, where extraction would discard the content. Ignored for non-HTML responses. Defaults to false."
+                }
+            },
+            "required": ["url"]
+        })
+    );
+}
+
+#[test]
+fn a_custom_fetch_policy_reaches_the_fetch_tools_schema() {
+    let loaded = loaded_for_loopback();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    assert_eq!(
+        schema(&pack)["properties"]["max_chars"]["maximum"],
+        LOOPBACK_MAX_CHARS,
         "the fetch tool enforces the custom policy"
     );
 }
 
-#[tokio::test]
-async fn a_call_to_a_tool_web_does_not_offer_fails_naming_it() {
-    let pack = made("web");
-    let call = TestCall::new(ToolId::parse("web/browse").expect("the id parses"));
-    let error = pack
-        .call(call.context(), json!({}))
-        .await
-        .expect_err("web has no browse tool");
-    assert_eq!(error.to_string(), "web has no tool named browse");
+/// The arguments and the URLs that the default policy refuses before the
+/// fetch task starts. Each fails its call as invalid arguments, and its
+/// message is pinned word for word, because a model reads it. A call
+/// with several faults reports the first: the `url` argument, then
+/// `max_chars`, then `raw`, and only then what the policy makes of the
+/// URL.
+#[test]
+fn a_call_the_tool_refuses_fails_as_invalid_arguments_with_its_message_word_for_word() {
+    let loaded = loaded();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    let literal = "https://1.2.3.4/";
+    let cases = [
+        (json!({}), "web_fetch: missing url argument"),
+        (json!(null), "web_fetch: missing url argument"),
+        (json!({ "url": 7 }), "web_fetch: missing url argument"),
+        (
+            json!({ "max_chars": 0, "raw": "yes" }),
+            "web_fetch: missing url argument",
+        ),
+        (
+            json!({ "url": literal, "max_chars": 0, "raw": "yes" }),
+            "web_fetch: max_chars must be a positive integer",
+        ),
+        (
+            json!({ "url": literal, "raw": "yes" }),
+            "web_fetch: raw must be a boolean",
+        ),
+        (json!({ "url": "not a url" }), "invalid url"),
+        (
+            json!({ "url": "https://user:pass@example.com/" }),
+            "url must not contain userinfo",
+        ),
+        (
+            json!({ "url": "https://example.com:8080/" }),
+            "port not allowed: 8080",
+        ),
+        (
+            json!({ "url": literal }),
+            "ip literal host not allowed: 1.2.3.4",
+        ),
+    ];
+    for (arguments, message) in cases {
+        assert_eq!(
+            pack.call("fetch", &arguments.to_string()),
+            Ok(Err(ToolError::new(
+                ToolErrorKind::InvalidArguments,
+                message
+            ))),
+            "{arguments}"
+        );
+    }
 }
 
-#[tokio::test]
-async fn a_call_reaches_the_tool_its_last_segment_names() {
-    let pack = made("browse");
-
-    let search = TestCall::new(ToolId::parse("browse/search").expect("the id parses"));
-    let output = pack
-        .call(search.context(), json!({ "query": "rust" }))
-        .await
-        .expect("the search tool answers through the provider");
-    assert_eq!(output.text(), r#"{"query":"rust","results":[]}"#);
-
-    let fetch = TestCall::new(ToolId::parse("browse/fetch").expect("the id parses"));
-    let error = pack
-        .call(fetch.context(), json!({ "url": "https://1.2.3.4/" }))
-        .await
-        .expect_err("the fetch policy refuses an IP literal host");
-    assert_eq!(error.code, ErrorCode::ToolInvalidArguments);
-    assert!(
-        error.to_string().contains("ip literal host not allowed"),
-        "the fetch tool's policy refused the call, got: {error}"
+/// The Plugin a Host loads resolves the name on its own runtime, and the
+/// default policy drops every address of this machine, so nothing is
+/// sent. The failure names the host and no address.
+#[test]
+fn the_plugin_a_host_loads_refuses_a_name_that_resolves_to_this_machine() {
+    let loaded = loaded();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    assert_eq!(
+        fetch(&pack, "https://localhost/"),
+        Err(ToolError::new(
+            ToolErrorKind::InvalidArguments,
+            "host localhost has no allowed address"
+        ))
     );
 }
 
-#[tokio::test]
-async fn each_service_key_literal_is_a_namespace_name_id() {
-    let mut host = HostServices::new();
-    host.provide(&SEARCH_PROVIDER, Arc::new(NoResults))
-        .expect("provide accepts the search provider's literal");
-    host.provide(&RUNTIME, Arc::new(Handle::current()))
-        .expect("provide accepts the runtime's literal");
+#[test]
+fn a_scheme_the_default_policy_refuses_is_an_untrusted_output_that_says_so() {
+    let loaded = loaded();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    assert_eq!(
+        fetch(&pack, "http://example.com/"),
+        Ok(ToolOutput::untrusted("scheme not allowed: http"))
+    );
+}
+
+#[test]
+fn arguments_that_are_not_json_fail_their_call_as_invalid_arguments() {
+    let loaded = loaded();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    assert_eq!(
+        pack.call("fetch", "{url: https://example.com/}"),
+        Ok(Err(ToolError::new(
+            ToolErrorKind::InvalidArguments,
+            "web: the call's arguments are not valid JSON"
+        )))
+    );
+}
+
+#[test]
+fn a_fetch_answers_a_page_as_untrusted_markdown_under_its_header() {
+    let (url, _events) = serve(Reply::Page("200 OK", ARTICLE));
+    let loaded = loaded_for_loopback();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    // The test has no tokio runtime of its own, so the fetch can only
+    // have run on the Plugin's, and the call came to its end only because
+    // the fetch's task woke it.
+    let output = fetch(&pack, &url).expect("the fetch succeeds");
+    assert!(!output.is_trusted(), "a page is text from outside");
+    let (header, text) = output
+        .text()
+        .split_once("\n\n")
+        .expect("a blank line ends the header");
+    assert_eq!(
+        header,
+        format!("url: {url}\ntruncated: false\nextraction: readability")
+    );
+    assert!(text.contains("first substantial paragraph"), "{text}");
+}
+
+#[test]
+fn a_page_that_answers_an_http_error_is_an_untrusted_output_that_says_so() {
+    let (url, _events) = serve(Reply::Page(
+        "404 Not Found",
+        "<html><body>Not Found</body></html>",
+    ));
+    let loaded = loaded_for_loopback();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    assert_eq!(
+        fetch(&pack, &url),
+        Ok(ToolOutput::untrusted(format!(
+            "{url} answered HTTP 404; try a different URL"
+        )))
+    );
+}
+
+#[test]
+fn a_request_that_gets_no_response_is_an_untrusted_output_that_says_so() {
+    let (url, _events) = serve(Reply::Nothing);
+    let loaded = loaded_for_loopback();
+    let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+    assert_eq!(
+        fetch(&pack, &url),
+        Ok(ToolOutput::untrusted(format!(
+            "fetch failed for {url}: network error; try a different URL"
+        )))
+    );
+}
+
+#[test]
+fn a_call_that_is_dropped_aborts_its_fetch_and_the_plugin_unloads() {
+    let (url, events) = serve(Reply::Hold);
+    let loaded = loaded_for_loopback();
+    {
+        let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
+        let mut call = pack.start("fetch", &json!({ "url": url }).to_string());
+        assert_eq!(
+            call.step(),
+            Ok(None),
+            "the call is parked while the server holds its answer"
+        );
+        // The call gets no further step, so the request can only have
+        // gone out from the Plugin's runtime while the call was parked.
+        assert_eq!(
+            events.recv_timeout(WAIT),
+            Ok(Event::Requested),
+            "the fetch runs while its call is parked"
+        );
+        drop(call);
+        // Only the abort of the fetch's task closes the connection
+        // before the policy's timeout does.
+        assert_eq!(
+            events.recv_timeout(WAIT),
+            Ok(Event::Closed),
+            "dropping the call aborts its fetch, which closes the connection"
+        );
+    }
+    assert_eq!(loaded.unload(), RV_OK);
+}
+
+/// How long the blocking thread of
+/// [`dropping_the_instance_ends_every_thread_of_its_runtime`] is still at
+/// work after the instance begins to drop.
+const IN_FLIGHT: Duration = Duration::from_millis(200);
+
+thread_local! {
+    /// Counts its thread as ended. A thread drops its locals as it exits,
+    /// so the count goes up when a marked thread is gone.
+    static ENDS: RefCell<Option<CountsOnDrop>> = const { RefCell::new(None) };
+}
+
+/// Adds one to its count when it is dropped.
+struct CountsOnDrop(Arc<AtomicUsize>);
+
+impl Drop for CountsOnDrop {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Marks the thread this runs on, so that the thread adds one to `ended`
+/// as it exits.
+fn mark_this_thread(ended: &Arc<AtomicUsize>) {
+    ENDS.with(|ends| *ends.borrow_mut() = Some(CountsOnDrop(Arc::clone(ended))));
+}
+
+/// An unload drops the instance, and the library closes right after, so a
+/// thread that is still running then crashes the process. The drop of the
+/// instance has to wait for every thread of the runtime: its two workers,
+/// and a blocking thread, the kind a host name is resolved on, that is
+/// still at work.
+#[test]
+fn dropping_the_instance_ends_every_thread_of_its_runtime() {
+    let web = Web::load().expect("the Plugin loads");
+    let ended = Arc::new(AtomicUsize::new(0));
+    let (marked, marks) = mpsc::channel();
+
+    // A worker runs one task at a time. Each of these two tasks holds its
+    // thread until both have marked theirs, so they run on the two
+    // workers.
+    let releases: Vec<_> = (0..2)
+        .map(|_| {
+            let (release, released) = mpsc::channel::<()>();
+            let (ended, marked) = (Arc::clone(&ended), marked.clone());
+            web.requests.spawn(async move {
+                mark_this_thread(&ended);
+                let _ = marked.send(());
+                let _ = released.recv_timeout(WAIT);
+            });
+            release
+        })
+        .collect();
+    for _ in 0..2 {
+        marks
+            .recv_timeout(WAIT)
+            .expect("each worker runs one of the two tasks");
+    }
+    drop(releases);
+
+    let ended_at_work = Arc::clone(&ended);
+    web.requests.spawn_blocking(move || {
+        mark_this_thread(&ended_at_work);
+        let _ = marked.send(());
+        thread::sleep(IN_FLIGHT);
+    });
+    marks
+        .recv_timeout(WAIT)
+        .expect("the blocking thread starts its work");
+
+    assert_eq!(
+        ended.load(Ordering::SeqCst),
+        0,
+        "every marked thread is running"
+    );
+    drop(web);
+    assert_eq!(
+        ended.load(Ordering::SeqCst),
+        3,
+        "the drop returned before a thread of the runtime had ended"
+    );
 }

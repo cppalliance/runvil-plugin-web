@@ -6,7 +6,7 @@
 
 use super::*;
 
-use runvil_plugin::ErrorCode;
+use runvil_plugin_sdk::ToolErrorKind;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_server_past_total_timeout_yields_timeout() {
@@ -177,7 +177,7 @@ async fn redirect_to_internal_via_injected_lookup_never_contacts_target() {
 
 #[tokio::test]
 async fn call_rejects_bad_urls_before_network() {
-    let tool = on_this_runtime(&FetchClient::new());
+    let tool = default_tool();
 
     let hard_cases = [
         (
@@ -197,7 +197,7 @@ async fn call_rejects_bad_urls_before_network() {
             .await
             .expect_err(&format!("expected {raw} to be refused before any network"));
         assert!(
-            err.code == ErrorCode::ToolInvalidArguments,
+            err.kind() == ToolErrorKind::InvalidArguments,
             "expected a policy rejection for {raw}, got: {err:?}"
         );
         assert!(
@@ -252,7 +252,7 @@ async fn soft_return_on_500() {
 
 #[tokio::test]
 async fn blocked_url_still_hard_fails() {
-    let tool = on_this_runtime(&FetchClient::new());
+    let tool = default_tool();
 
     let err = tool
         .call(serde_json::json!({ "url": "https://1.2.3.4/secret" }))
@@ -260,7 +260,7 @@ async fn blocked_url_still_hard_fails() {
         .expect_err("a bare IP literal URL must still be a hard error");
 
     assert!(
-        err.code == ErrorCode::ToolInvalidArguments && err.to_string().contains("ip literal"),
+        err.kind() == ToolErrorKind::InvalidArguments && err.to_string().contains("ip literal"),
         "got: {err:?}"
     );
 }

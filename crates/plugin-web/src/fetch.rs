@@ -1,22 +1,27 @@
 //! The `web_fetch` tool: [`FetchClient`], the hardened HTTP client and the
 //! policy it enforces, built once, and [`WebFetch`], that client bound to
-//! the Host's runtime, whose [`call`](WebFetch::call) performs one fetch.
+//! the Plugin's runtime, whose [`call`](WebFetch::call) performs one fetch.
 //!
 //! `FetchClient` composes the URL-admission policy, the guarded DNS resolver,
 //! the per-hop redirect policy, and the bounded body reads into one safe
 //! fetch. The client is built with no ambient proxy, no automatic `Referer`,
 //! no cookie store, and no default credentials, so no request includes an
-//! ambient identity on any hop. `WebFetch` spawns each fetch onto the Host's
+//! ambient identity on any hop. `WebFetch` spawns each fetch onto the Plugin's
 //! runtime and aborts it when the call is dropped.
+//!
+//! The Host polls a call on a thread of its own, which has no context of
+//! the Plugin's runtime, and the client needs that context for its sockets,
+//! its timers, and its host lookups. So a call sends no request itself: it
+//! spawns the fetch as a task on the runtime and awaits the task's handle,
+//! which needs no context and wakes the call when the task ends.
 
 use std::sync::Arc;
 
 use reqwest::header::CONTENT_TYPE;
+use runvil_plugin_sdk::{ToolError, ToolErrorKind, ToolOutput};
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use url::Url;
-
-use runvil_plugin::{Error, ErrorCode, ToolOutput, make_tool_error};
 
 use crate::config::{ConfigError, FetchConfig};
 use crate::error::{Disposition, FetchError, SafeUrl};
@@ -29,8 +34,8 @@ use crate::response::{
 use crate::url_policy::check_url;
 
 /// The result [`WebFetch::call`] returns: untrusted page text on success,
-/// a narrow tool [`Error`] on a hard failure.
-type CallResult = Result<ToolOutput, Error>;
+/// a narrow [`ToolError`] on a hard failure.
+type CallResult = Result<ToolOutput, ToolError>;
 
 /// The hardened HTTP client the fetch tool sends every request through,
 /// with the validated [`FetchConfig`] policy it enforces.
@@ -50,10 +55,12 @@ pub(crate) struct FetchClient {
 /// address the policy allows, and the per-hop [`redirect_policy`]. Disables
 /// ambient proxies (`no_proxy`) and automatic `Referer` (`referer(false)`), and
 /// sets no cookie store and no default headers, so no request sends an ambient
-/// identity on any hop, including after a redirect.
+/// identity on any hop, including after a redirect. Names rustls as the TLS
+/// backend, so the client uses it even in a build that turns on another one.
 fn build_client(config: &Arc<FetchConfig>) -> Result<reqwest::Client, reqwest::Error> {
     let resolver = Arc::new(GuardedResolver::system(Arc::clone(config)));
     reqwest::Client::builder()
+        .tls_backend_rustls()
         .dns_resolver(resolver)
         .redirect(redirect_policy((**config).clone()))
         .no_proxy()
@@ -66,38 +73,13 @@ fn build_client(config: &Arc<FetchConfig>) -> Result<reqwest::Client, reqwest::E
 }
 
 impl FetchClient {
-    /// Builds the client over the built-in default policy.
-    ///
-    /// # Panics
-    /// Panics only if the underlying HTTP client cannot be built for the default
-    /// policy, which means the TLS backend failed to initialize: a defect in the
-    /// environment, not a condition a caller can act on. Use
-    /// [`FetchClient::try_with_config`] for a fallible constructor.
-    pub(crate) fn new() -> FetchClient {
-        let config = Arc::new(FetchConfig::default());
-        #[expect(
-            clippy::expect_used,
-            reason = "the default policy is a compile-time-valid constant; a build failure means the TLS backend could not initialize, a defect, not a caller-actionable condition"
-        )]
-        let http = build_client(&config)
-            .expect("building the web_fetch client cannot fail with the default policy");
-        FetchClient { http, config }
-    }
-
-    /// Builds the client over a validated custom policy.
+    /// Builds the client over a validated policy.
     ///
     /// # Errors
     /// Returns [`ConfigError`] if the HTTP client cannot be built for `config`
     /// (for example a TLS backend that fails to initialize). The policy itself
     /// is already validated by [`FetchConfig`] construction, so no policy field
     /// can trigger a failure here.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "web's configuration accepts no settings yet, so only the crate's tests build a custom fetch policy"
-        )
-    )]
     pub(crate) fn try_with_config(config: FetchConfig) -> Result<FetchClient, ConfigError> {
         let config = Arc::new(config);
         let http = build_client(&config).map_err(ConfigError::client_build)?;
@@ -112,6 +94,7 @@ impl FetchClient {
         let config = Arc::new(config);
         let resolver = Arc::new(GuardedResolver::new(lookup, Arc::clone(&config)));
         let http = reqwest::Client::builder()
+            .tls_backend_rustls()
             .dns_resolver(resolver)
             .redirect(redirect_policy((*config).clone()))
             .no_proxy()
@@ -235,13 +218,13 @@ impl FetchClient {
 
 /// A tool that fetches a web page and returns its main content as markdown.
 ///
-/// It holds the shared [`FetchClient`] and the Host's runtime handle, which
-/// every fetch is spawned onto.
+/// It holds the shared [`FetchClient`] and the handle of the Plugin's runtime,
+/// which every fetch is spawned onto.
 #[derive(Debug, Clone)]
 pub(crate) struct WebFetch {
     /// The client and policy every fetch goes through.
     client: FetchClient,
-    /// The Host's runtime, which runs each fetch.
+    /// The Plugin's runtime, which runs each fetch.
     runtime: Handle,
 }
 
@@ -259,7 +242,7 @@ impl Drop for AbortOnDrop {
 fn soft_or_hard(err: &FetchError) -> CallResult {
     match err.classify() {
         Disposition::SoftOutput => Ok(ToolOutput::untrusted(err.model_facing())),
-        Disposition::Hard(code) => Err(make_tool_error(code, err.model_facing())),
+        Disposition::Hard(kind) => Err(ToolError::new(kind, err.model_facing())),
     }
 }
 
@@ -283,7 +266,7 @@ fn map_send_error_to_outcome(err: &reqwest::Error, url: &str) -> CallResult {
         if let Some(fetch_err) = current.downcast_ref::<FetchError>() {
             return match fetch_err.classify() {
                 Disposition::SoftOutput => Ok(ToolOutput::untrusted(fetch_err.model_facing())),
-                Disposition::Hard(code) => Err(make_tool_error(code, fetch_err.model_facing())),
+                Disposition::Hard(kind) => Err(ToolError::new(kind, fetch_err.model_facing())),
             };
         }
         source = current.source();
@@ -305,7 +288,7 @@ impl WebFetch {
     /// The one sentence the model reads to decide when to fetch.
     #[expect(
         clippy::unused_self,
-        reason = "both tools' descriptions and schemas are read through the tool, as this tool's schema reads its policy"
+        reason = "the description is read through the tool, as the schema is, which reads the tool's policy"
     )]
     pub(crate) fn description(&self) -> &'static str {
         "Fetch a web page and return its main content as markdown."
@@ -337,12 +320,12 @@ impl WebFetch {
         })
     }
 
-    /// Fetches the URL `args` names on the Host's runtime and renders its
+    /// Fetches the URL `args` names on the Plugin's runtime and renders its
     /// response as untrusted text. Dropping the returned future aborts the
     /// fetch.
     ///
     /// # Errors
-    /// Returns an [`Error`] for invalid arguments, a URL the policy
+    /// Returns a [`ToolError`] for invalid arguments, a URL the policy
     /// refuses outright, or a fetch task that did not finish. A page the
     /// fetch could not render is a soft, untrusted output instead.
     pub(crate) async fn call(&self, args: serde_json::Value) -> CallResult {
@@ -350,8 +333,8 @@ impl WebFetch {
             .get("url")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| {
-                make_tool_error(
-                    ErrorCode::ToolInvalidArguments,
+                ToolError::new(
+                    ToolErrorKind::InvalidArguments,
                     "web_fetch: missing url argument",
                 )
             })?;
@@ -367,17 +350,18 @@ impl WebFetch {
             Err(err) => return soft_or_hard(&err),
         };
 
+        // The task's handle is all the call awaits, so the call is parked
+        // until the task ends, which wakes it.
         let mut task = AbortOnDrop(
             self.runtime
                 .spawn(self.client.clone().fetch(url, max_chars, raw)),
         );
         match (&mut task.0).await {
             Ok(result) => result,
-            Err(join) => Err(make_tool_error(
-                ErrorCode::ToolOther,
+            Err(_) => Err(ToolError::new(
+                ToolErrorKind::Other,
                 "web_fetch: the fetch task did not finish",
-            )
-            .with_cause(&join)),
+            )),
         }
     }
 }
@@ -385,9 +369,9 @@ impl WebFetch {
 /// Parses the optional `max_chars` argument, clamped to `ceiling`.
 ///
 /// # Errors
-/// Returns an invalid-arguments [`Error`] if `max_chars` is present but is
+/// Returns an invalid-arguments [`ToolError`] if `max_chars` is present but is
 /// not a positive integer.
-fn parse_max_chars(args: &serde_json::Value, ceiling: usize) -> Result<usize, Error> {
+fn parse_max_chars(args: &serde_json::Value, ceiling: usize) -> Result<usize, ToolError> {
     let Some(value) = args.get("max_chars") else {
         return Ok(ceiling);
     };
@@ -395,8 +379,8 @@ fn parse_max_chars(args: &serde_json::Value, ceiling: usize) -> Result<usize, Er
         return Ok(ceiling);
     }
     let n = value.as_u64().filter(|n| *n >= 1).ok_or_else(|| {
-        make_tool_error(
-            ErrorCode::ToolInvalidArguments,
+        ToolError::new(
+            ToolErrorKind::InvalidArguments,
             "web_fetch: max_chars must be a positive integer",
         )
     })?;
@@ -407,15 +391,15 @@ fn parse_max_chars(args: &serde_json::Value, ceiling: usize) -> Result<usize, Er
 /// Parses the optional `raw` argument, defaulting to `false`.
 ///
 /// # Errors
-/// Returns an invalid-arguments [`Error`] if `raw` is present and is neither
-/// null nor a boolean.
-fn parse_raw(args: &serde_json::Value) -> Result<bool, Error> {
+/// Returns an invalid-arguments [`ToolError`] if `raw` is present and is
+/// neither null nor a boolean.
+fn parse_raw(args: &serde_json::Value) -> Result<bool, ToolError> {
     match args.get("raw") {
         None => Ok(false),
         Some(value) if value.is_null() => Ok(false),
         Some(value) => value.as_bool().ok_or_else(|| {
-            make_tool_error(
-                ErrorCode::ToolInvalidArguments,
+            ToolError::new(
+                ToolErrorKind::InvalidArguments,
                 "web_fetch: raw must be a boolean",
             )
         }),

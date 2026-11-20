@@ -237,9 +237,8 @@ async fn flat_text_body_read_failure_is_soft() {
         .call(serde_json::json!({ "url": url }))
         .await
         .expect("a mid-stream flat-text failure must be a soft return, not a hard error");
-    assert_eq!(
-        outcome.trust(),
-        runvil_plugin::OutputTrust::Untrusted,
+    assert!(
+        !outcome.is_trusted(),
         "a soft body-read failure must be untrusted output"
     );
     let result = outcome.text().to_owned();

@@ -9,9 +9,9 @@ edition = "2024"
 license = "BSL-1.0"
 
 [workspace.dependencies]
-# The Plugin SDK at contract 0.5, pinned to a commit. A Host loads this
+# The Plugin SDK at contract 0.6, pinned to a commit. A Host loads this
 # Plugin only when its Harness speaks the same contract version.
-runvil-plugin-sdk = { version = "0.5.0", git = "https://github.com/cppalliance/runvil-plugin-api", rev = "52a4905aca0a9c945a93dc4ee7ea815db85612e4" }
+runvil-plugin-sdk = { version = "0.6.0", git = "https://github.com/cppalliance/runvil-plugin-api", rev = "74f9e08ba9cc524520fb4c90bd8ac372ba7f303f" }
 # The HTTP client, over rustls with one crypto backend, aws-lc-rs. reqwest
 # 0.13 has no feature that picks `ring`, and CI checks that `ring` stays
 # out of the workspace's normal dependency graph. Root certificates come
@@ -26,21 +26,28 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
 # A call's arguments arrive as JSON text.
 serde_json = "1"
-# What the fetch and search sources under `crates/plugin-web/src` and
-# `crates/harness-gateway-client/src` are written against. `lib.rs`
-# declares none of those files as a module, so no crate inherits these
-# entries, and `Cargo.lock` holds one of them only where another
-# dependency brings it in.
-serde = { version = "1", features = ["derive"] }
-readabilityrs = "0.1"
-htmd = "0.5"
+# The fetch policy. `url` parses the URL a call names. `ipnet` holds the
+# ranges of addresses a fetch never reaches, and 2.10 is its first release
+# with the constructors that build the table of them as a constant.
+url = "2"
+ipnet = "2.10"
+# The fetch tool's rendering of a response. `mime` reads its content type,
+# `encoding_rs` decodes its body under the charset it declares,
+# `readabilityrs` picks the article out of an HTML page, and `htmd`
+# renders HTML to markdown.
 mime = "0.3"
 encoding_rs = "0.8"
-url = "2"
-ipnet = "2"
+readabilityrs = "0.1"
+htmd = "0.5"
+# Derives the fetch tool's error types.
 thiserror = "2"
-# Dev-only, for the tests of those sources: the mock servers they send
-# real requests to, and the compressed and streamed bodies those serve.
+# What the search sources under `crates/plugin-web/src` and
+# `crates/harness-gateway-client/src` are written against. `lib.rs`
+# declares none of those files as a module, so no crate inherits this
+# entry.
+serde = { version = "1", features = ["derive"] }
+# Dev-only, for the fetch tool's tests: the mock servers they send real
+# requests to, and the compressed and streamed bodies those serve.
 axum = "0.8"
 flate2 = "1"
 futures-util = "0.3"

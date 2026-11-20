@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+# Named one by one: `crates/harness-gateway-client` holds source files and
+# no manifest, and a `crates/*` glob fails on a directory without one.
+members = ["crates/plugin-web", "crates/build-checks"]
+
+[workspace.package]
+edition = "2024"
+license = "BSL-1.0"
+
+[workspace.dependencies]
+# The Plugin SDK at contract 0.5, pinned to a commit. A Host loads this
+# Plugin only when its Harness speaks the same contract version.
+runvil-plugin-sdk = { version = "0.5.0", git = "https://github.com/cppalliance/runvil-plugin-api", rev = "52a4905aca0a9c945a93dc4ee7ea815db85612e4" }
+# Parses this workspace's sources for the type-size check; `full` is the
+# feature that parses items.
+syn = { version = "3", features = ["full"] }
+# `span-locations` makes a span parsed outside a proc macro report its line,
+# which the type-size check prints with every violation.
+proc-macro2 = { version = "1", features = ["span-locations"] }
+tempfile = "3"
+
+# The dylint libraries `cargo dylint --all` runs. The lints live in their
+# own repository, shared across the runvil project, because they build on
+# their own nightly with `rustc_private`. Moving to a newer lint set is a
+# change of `rev`.
+[workspace.metadata.dylint]
+libraries = [{ git = "https://github.com/cppalliance/dylints", rev = "982b297ede90d37cdf8f3bf9995d1d706dcc51d4" }]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+future_incompatible = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+unescaped_backticks = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "warn"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+exit = "deny"
+disallowed_methods = "deny"
+disallowed_types = "deny"
+disallowed_macros = "deny"
+# Cherry-picked out of pedantic: it flags product names (Runvil, OpenAI) in
+# prose, which reads worse backticked than the lint is worth.
+doc_markdown = "allow"
+# Cherry-picked out of pedantic: its suggested rewrite for a collection is
+# `assert_eq!(x, [] as [T; 0])`, which has to spell out the element type and
+# needs `T: PartialEq + Debug`, so it cannot be applied to most call sites.
+assert_is_empty = "allow"

@@ -1,0 +1,26 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Size limits sit on functions (here) and on types (the type-size check in
+# `crates/build-checks`). A file has no length limit.
+too-many-lines-threshold = 100
+too-many-arguments-threshold = 7
+
+# A Plugin shares its process with the Host, so it never installs
+# process-global state. The Plugin's HTTP client brings `log`, `tracing`,
+# and `rustls` into its dependency tree, and each of them has a function
+# that installs such state. `tracing_subscriber` is not in the tree, and
+# its entries hold from the day it is. No entry names a `replacement`,
+# because no alternative takes the same arguments and returns the same
+# value.
+disallowed-methods = [
+    { path = "std::panic::set_hook", reason = "use a returned error instead, because the panic hook is process-global state that a Plugin shares with its Host" },
+    { path = "log::set_logger", reason = "use a returned error instead, because the logger is process-global state that a Plugin shares with its Host" },
+    # `allow-invalid`: `set_boxed_logger` exists only under an optional `log`
+    # feature, so some builds cannot resolve the path.
+    { path = "log::set_boxed_logger", reason = "use a returned error instead, because the logger is process-global state that a Plugin shares with its Host", allow-invalid = true },
+    { path = "tracing::subscriber::set_global_default", reason = "use `tracing::subscriber::with_default` instead, because the global default subscriber is process-global state that a Plugin shares with its Host" },
+    { path = "tracing_subscriber::util::SubscriberInitExt::init", reason = "use `tracing::subscriber::with_default` instead, because `init` installs the global default subscriber and logger, process-global state that a Plugin shares with its Host" },
+    { path = "tracing_subscriber::util::SubscriberInitExt::try_init", reason = "use `tracing::subscriber::with_default` instead, because `try_init` installs the global default subscriber and logger, process-global state that a Plugin shares with its Host" },
+    { path = "rustls::crypto::CryptoProvider::install_default", reason = "use `ClientConfig::builder_with_provider` instead, because the default crypto provider is process-global state that a Plugin shares with its Host" },
+]

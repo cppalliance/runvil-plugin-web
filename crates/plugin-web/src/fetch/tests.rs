@@ -1,10 +1,10 @@
 //! Fixtures and tool info tests for [`WebFetch`]: the loopback article,
 //! table, and JSON pages, the injected [`Lookup`] map, the mock servers
 //! and their routes, and the loopback policy builders, plus the abort of
-//! a dropped call's fetch. The policy tests (redirects, credentials, URL
-//! admission, status codes) and the body tests (size caps, truncation,
-//! content types, charsets) sit in the child modules and share these
-//! fixtures.
+//! a dropped call's fetch, and the thread that blocking work runs on. The
+//! policy tests (redirects, credentials, URL admission, status codes) and
+//! the body tests (size caps, truncation, content types, charsets) sit in
+//! the child modules and share these fixtures.
 
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
@@ -25,7 +25,7 @@ use runvil_plugin_sdk::BoxFuture;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::runtime::Handle;
 
-use super::{FetchClient, WebFetch};
+use super::{FetchClient, WebFetch, on_blocking_thread};
 use crate::config::{FetchConfig, FetchConfigBuilder};
 use crate::resolver::Lookup;
 
@@ -98,6 +98,22 @@ fn default_tool() -> WebFetch {
     on_this_runtime(
         &FetchClient::try_with_config(FetchConfig::default()).expect("the default client builds"),
     )
+}
+
+/// The runtime of a plain `#[tokio::test]` has one thread, the test's
+/// own, which is its only worker. So work that ran on another thread held
+/// no worker.
+#[tokio::test]
+async fn work_on_a_blocking_thread_holds_no_worker_and_is_none_when_it_panics() {
+    let worker = std::thread::current().id();
+    let ran_on = on_blocking_thread(|| std::thread::current().id()).await;
+    assert!(
+        ran_on.is_some_and(|thread| thread != worker),
+        "the work ran on {ran_on:?}, and the worker is {worker:?}"
+    );
+
+    let panicked = on_blocking_thread(|| -> u8 { panic!("the work panics") }).await;
+    assert_eq!(panicked, None);
 }
 
 #[tokio::test]

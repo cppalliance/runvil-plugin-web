@@ -43,12 +43,12 @@
 //! tool's parameters, and when the fetch policy can never fetch its URL:
 //! one that does not parse, holds a user name or a password, names a
 //! port outside the policy, has an IP address for its host, or resolves
-//! to no address the policy allows. A call whose fetch task panics fails
-//! with `web_fetch: the fetch task did not finish`. Anything else that
-//! goes wrong is an untrusted output that says so, such as an HTTP error
-//! status, a timeout, a refused redirect, a body over the size cap, or a
-//! type the tool does not render. The model reads it and can try another
-//! URL.
+//! to no address the policy allows. A call whose fetch task panics, or
+//! whose page makes the rendering panic, fails with `web_fetch: the fetch
+//! task did not finish`. Anything else that goes wrong is an untrusted
+//! output that says so, such as an HTTP error status, a timeout, a
+//! refused redirect, a body over the size cap, or a type the tool does
+//! not render. The model reads it and can try another URL.
 //!
 //! # The fetch policy
 //!
@@ -86,12 +86,16 @@
 //! wakes the call. A call the Host abandons drops its future, which
 //! aborts the task, and the connection closes with the task.
 //!
-//! The runtime has two worker threads, and it starts more for blocking
-//! work: a host name is resolved on one of those. A page is rendered to
-//! markdown inside its fetch task, on a worker thread, so a large page
-//! holds one of the two workers while it renders. Dropping the Plugin
-//! instance drops the runtime, which waits for every one of its threads,
-//! so an unload returns only when a lookup that is in flight has ended.
+//! The runtime has two worker threads, which drive the sockets and the
+//! timers of every fetch, and it starts more threads for blocking work.
+//! Two things run on those: a host name is resolved there, and an HTML
+//! page is rendered to markdown there. Rendering only computes, and a
+//! large page takes seconds of it, so on a worker it would stall every
+//! other fetch. A lookup or a rendering that has started cannot be
+//! aborted, so it runs to its end even when its call is dropped.
+//! Dropping the Plugin instance drops the runtime, which waits for every
+//! one of its threads, so an unload returns only when each lookup and
+//! each rendering that is in flight has ended.
 //!
 //! ## Invariants
 //!
@@ -117,6 +121,9 @@
 //!   so an unload leaves no thread behind.
 //! - A call awaits the task of its fetch, and dropping the call aborts
 //!   the task.
+//! - An HTML page is rendered, and a host name is resolved, on a thread
+//!   the runtime starts for blocking work, never on one of its two
+//!   workers, which drive the sockets and the timers of every fetch.
 //! - Production code keeps nothing in a `static`, so an unload frees
 //!   everything the Plugin holds. The table of blocked ranges is a
 //!   constant.

@@ -13,7 +13,9 @@
 //! the Plugin's runtime, and the client needs that context for its sockets,
 //! its timers, and its host lookups. So a call sends no request itself: it
 //! spawns the fetch as a task on the runtime and awaits the task's handle,
-//! which needs no context and wakes the call when the task ends.
+//! which needs no context and wakes the call when the task ends. The task
+//! renders an HTML page on a thread the runtime starts for blocking work,
+//! so that the rendering, which only computes, holds no worker thread.
 
 use std::sync::Arc;
 
@@ -118,6 +120,8 @@ impl FetchClient {
 
     /// Sends the GET for an admitted `url` and renders its response: the
     /// request, the body read, and the extraction a call spawns as one task.
+    /// The task hands the rendering of an HTML page to a blocking thread and
+    /// awaits it there.
     async fn fetch(self, url: Url, max_chars: usize, raw: bool) -> CallResult {
         let response = match self.http.get(url.clone()).send().await {
             Ok(resp) => resp,
@@ -179,7 +183,12 @@ impl FetchClient {
                     Ok(d) => d,
                     Err(e) => return soft_or_hard(&e),
                 };
-                let (markdown, extraction) = extract_html(&decoded, Some(final_url.as_str()), raw);
+                let base_url = final_url.to_string();
+                let rendering =
+                    on_blocking_thread(move || extract_html(&decoded, Some(&base_url), raw));
+                let Some((markdown, extraction)) = rendering.await else {
+                    return Err(did_not_finish());
+                };
                 (markdown, extraction, false)
             }
             Route::Plain { structured: true } => {
@@ -235,6 +244,31 @@ impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
     }
+}
+
+/// Runs `work` on a thread that the runtime starts for blocking work, and
+/// returns what it returns, or `None` when it panicked or the runtime shut
+/// down before it ran.
+///
+/// A fetch task hands over work that only computes, which is the rendering
+/// of an HTML page: a large page takes seconds of it. The runtime's worker
+/// threads drive the sockets and the timers of every call, so such work on
+/// a worker would stall every other fetch. Work that has started cannot be
+/// aborted: it runs to its end on its thread, even when the task that
+/// awaits it is dropped.
+async fn on_blocking_thread<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    tokio::task::spawn_blocking(work).await.ok()
+}
+
+/// The failure of a call whose fetch did not come to its end: the fetch
+/// task, or the rendering of its page, panicked or was cancelled.
+fn did_not_finish() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Other,
+        "web_fetch: the fetch task did not finish",
+    )
 }
 
 /// Maps a [`FetchError`] to a soft tool output or a hard `Err` by its
@@ -358,10 +392,7 @@ impl WebFetch {
         );
         match (&mut task.0).await {
             Ok(result) => result,
-            Err(_) => Err(ToolError::new(
-                ToolErrorKind::Other,
-                "web_fetch: the fetch task did not finish",
-            )),
+            Err(_) => Err(did_not_finish()),
         }
     }
 }

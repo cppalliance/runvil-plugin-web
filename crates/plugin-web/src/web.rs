@@ -1,12 +1,14 @@
 //! The crate's Plugin, [`Web`], and the Pack it inserts. [`Web`] is the
 //! instance the Host holds while the Plugin is loaded: it owns the fetch
-//! client and the runtime that every fetch runs on. [`WebPack`] is one
-//! run's instance of the Pack `runvil/web`: it lists the Pack's tool and
-//! performs its calls.
+//! client, the search client, and the runtime that every request runs on.
+//! [`WebPack`] is one run's instance of the Pack `runvil/web`: it lists
+//! the Pack's two tools and performs their calls.
 //!
-//! The fetch client is built once, when the Plugin loads, over the
-//! default fetch policy. The Plugin is handed no configuration, so
-//! nothing a Host or a prompt passes reaches that policy.
+//! Both clients are built once, when the Plugin loads, the fetch client
+//! over the default fetch policy. The Plugin is handed no configuration,
+//! so nothing a Host or a prompt passes reaches that policy. What a Host
+//! does pass is its resources, which every call is lent, and a search
+//! reads where it goes from them.
 
 use std::error::Error;
 
@@ -19,26 +21,35 @@ use tokio::runtime::Runtime;
 
 use crate::config::FetchConfig;
 use crate::fetch::{FetchClient, WebFetch};
+use crate::gateway::SearchClient;
+use crate::search::WebSearch;
 
 /// The Pack's name and description. Its name is `runvil/web`, so its Pack
-/// id is `web`, and a prompt reaches its tool as `web/fetch`.
-const INFO: PackInfo = PackInfo::new("runvil/web").description("Fetch pages from the web");
+/// id is `web`, and a prompt reaches its tools as `web/fetch` and
+/// `web/search`.
+const INFO: PackInfo = PackInfo::new("runvil/web").description("Search the web and fetch pages");
 
 /// The fetch tool's name within the Pack, the last segment of its Lua id.
 const FETCH: &str = "fetch";
 
+/// The search tool's name within the Pack, the last segment of its Lua id.
+const SEARCH: &str = "search";
+
 /// The Plugin instance the Host holds while the Plugin is loaded. It
-/// holds what every run shares: the fetch client and the runtime that
-/// runs every fetch. Nothing outlives the instance.
+/// holds what every run shares: the two clients and the runtime that runs
+/// every request. Nothing outlives the instance.
 #[derive(Debug)]
 pub struct Web {
     /// The hardened client every fetch goes through, built once, so every
     /// run shares one connection pool.
     fetch: FetchClient,
-    /// Runs every fetch: a call spawns its fetch here and awaits the
-    /// task. Two worker threads, with I/O and time on. Dropping the
-    /// instance drops it, which joins its threads, so an unload leaves no
-    /// thread behind.
+    /// The client every search goes through, built once, so every run
+    /// shares one connection pool.
+    search: SearchClient,
+    /// Runs every request, fetch and search alike: a call spawns its
+    /// work here and awaits the task. Two worker threads, with I/O and
+    /// time on. Dropping the instance drops it, which joins its threads,
+    /// so an unload leaves no thread behind.
     requests: Runtime,
 }
 
@@ -48,13 +59,19 @@ impl Web {
     /// another.
     ///
     /// # Errors
-    /// Returns a [`Refusal`] when the fetch client cannot be built, which
-    /// happens when the TLS backend fails to start, and when the system
-    /// will not start a thread of the runtime.
+    /// Returns a [`Refusal`] when the fetch client or the search client
+    /// cannot be built, which happens when the TLS backend fails to
+    /// start, and when the system will not start a thread of the runtime.
     fn with_fetch_config(policy: FetchConfig) -> Result<Web, Refusal> {
         let fetch = FetchClient::try_with_config(policy).map_err(|error| {
             Refusal::new(format!(
                 "web could not build its fetch client: {}",
+                chain(&error)
+            ))
+        })?;
+        let search = SearchClient::try_new().map_err(|error| {
+            Refusal::new(format!(
+                "web could not build its search client: {}",
                 chain(&error)
             ))
         })?;
@@ -69,7 +86,11 @@ impl Web {
                     "web could not start the threads that run its requests: {error}"
                 ))
             })?;
-        Ok(Web { fetch, requests })
+        Ok(Web {
+            fetch,
+            search,
+            requests,
+        })
     }
 }
 
@@ -80,9 +101,9 @@ impl Plugin for Web {
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
     const PACKS: &'static [PackInfo] = &[INFO];
 
-    /// Builds the fetch client over the default policy and starts the
-    /// runtime. It refuses the load when either cannot be built, and it
-    /// never panics.
+    /// Builds the fetch client over the default policy and the search
+    /// client, and starts the runtime. It refuses the load when one of
+    /// the three cannot be built, and it never panics.
     fn load() -> Result<Web, Refusal> {
         Web::with_fetch_config(FetchConfig::default())
     }
@@ -90,33 +111,44 @@ impl Plugin for Web {
     fn new_pack(&self, _pack: &str) -> Result<Box<dyn Pack>, Refusal> {
         Ok(Box::new(WebPack {
             fetch: self.fetch.tool(self.requests.handle().clone()),
+            search: WebSearch::new(self.search.clone(), self.requests.handle().clone()),
         }))
     }
 }
 
-/// One run's instance of the Pack: its one tool, `fetch`. It holds only
-/// what every run shares: a clone of the fetch client, which shares the
-/// one connection pool, and the handle of the Plugin's runtime.
+/// One run's instance of the Pack: its two tools, `fetch` and `search`.
+/// It holds only what every run shares: a clone of each client, which
+/// shares that client's one connection pool, and the handle of the
+/// Plugin's runtime.
 struct WebPack {
     fetch: WebFetch,
+    search: WebSearch,
 }
 
 impl Pack for WebPack {
     fn tools(&self) -> Vec<ToolInfo> {
-        vec![ToolInfo::new(
-            FETCH,
-            self.fetch.description(),
-            self.fetch.parameters_schema().to_string(),
-        )]
+        vec![
+            ToolInfo::new(
+                FETCH,
+                self.fetch.description(),
+                self.fetch.parameters_schema().to_string(),
+            ),
+            ToolInfo::new(
+                SEARCH,
+                self.search.description(),
+                self.search.parameters_schema().to_string(),
+            ),
+        ]
     }
 
     fn call<'a>(&'a self, call: ToolCall<'a>) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-            // The arguments are parsed once, here, and the tool reads the
+            // The arguments are parsed once, here, and each tool reads the
             // value.
             let args = arguments(call.arguments())?;
             match call.tool() {
                 FETCH => self.fetch.call(args).await,
+                SEARCH => self.search.call(args, call.resources()).await,
                 other => Err(ToolError::new(
                     ToolErrorKind::Other,
                     format!("web has no tool named {other}"),
@@ -139,8 +171,8 @@ fn arguments(text: &str) -> Result<Value, ToolError> {
 }
 
 /// The text of `error`, and after it the text of each of its causes that
-/// adds something. The client keeps the reason it could not be built,
-/// such as a TLS backend that did not start, in the causes of its error.
+/// adds something. A client keeps the reason it could not be built, such
+/// as a TLS backend that did not start, in the causes of its error.
 fn chain(error: &dyn Error) -> String {
     let mut text = error.to_string();
     let mut cause = error.source();

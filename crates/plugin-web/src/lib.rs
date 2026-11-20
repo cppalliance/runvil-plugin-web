@@ -141,9 +141,14 @@ mod address;
 mod config;
 mod error;
 mod fetch;
+mod gateway;
+#[cfg(test)]
+mod mock_gateway;
 mod redirect;
 mod resolver;
 mod response;
+mod search;
+mod task;
 mod url_policy;
 mod web;
 

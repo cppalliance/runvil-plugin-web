@@ -1,7 +1,7 @@
 [package]
 name = "plugin-web"
 version = "0.1.0"
-description = "The web Plugin for runvil: a tool that fetches a page from the web"
+description = "The web Plugin for runvil: a tool that searches the web and a tool that fetches a page from it"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -15,13 +15,17 @@ crate-type = ["cdylib", "rlib"]
 # The Plugin contract's safe layer: the `Plugin` and `Pack` traits, what a
 # tool call is lent, and the entry point.
 runvil-plugin-sdk.workspace = true
-# The HTTP client every fetch goes through.
+# The HTTP client every fetch and every search goes through.
 reqwest.workspace = true
-# The runtime that runs every fetch.
+# The runtime that runs every request.
 tokio.workspace = true
-# A call's arguments arrive as JSON text, and the tool's parameter schema
-# is JSON.
+# A call's arguments and the Host's resources arrive as JSON text, a
+# tool's parameter schema is JSON, and a search sends and answers JSON.
 serde_json.workspace = true
+# Derives the types the search tool reads and writes as JSON: its
+# arguments, which are also the Gateway's request, the Gateway's reply,
+# and the entry of the Host's resources that names the Gateway.
+serde.workspace = true
 # The fetch policy: `url` parses the URL a call names, and `ipnet` holds
 # the ranges of addresses a fetch never reaches.
 url.workspace = true
@@ -42,14 +46,14 @@ thiserror.workspace = true
 runvil-plugin-sdk = { workspace = true, features = ["test-support"] }
 # Opens the built library in the example.
 libloading.workspace = true
-# The mock servers the fetch tool's tests send real requests to.
+# The mock servers the tests of both tools send real requests to.
 axum.workspace = true
-# The gzip body one of those servers answers with.
+# The gzip body one of the fetch tool's servers answers with.
 flate2.workspace = true
 # The bodies those servers stream: one that never ends, and one that
 # fails midway.
 futures-util.workspace = true
-# The fetch tool's own tests run it on the runtime of a `#[tokio::test]`.
+# The own tests of each tool run it on the runtime of a `#[tokio::test]`.
 # `macros` is that attribute and `select!`, `io-util` reads and writes the
 # socket of a mock that speaks raw TCP, and `sync` is the channel such a
 # mock reports through.

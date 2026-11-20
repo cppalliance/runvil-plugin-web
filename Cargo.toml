@@ -1,8 +1,6 @@
 [workspace]
 resolver = "3"
-# Named one by one: `crates/harness-gateway-client` holds source files and
-# no manifest, and a `crates/*` glob fails on a directory without one.
-members = ["crates/plugin-web", "crates/build-checks"]
+members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
@@ -19,12 +17,14 @@ runvil-plugin-sdk = { version = "0.6.0", git = "https://github.com/cppalliance/r
 # feature's default), not from a bundled Mozilla list. `gzip` and `brotli`
 # decode a compressed body, `json` writes and reads a JSON body, and
 # `system-proxy` reads the proxies of the Windows registry and of macOS
-# for a client that takes a proxy.
+# for the search client, which honors the system's proxy settings. The
+# fetch client takes no proxy.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "gzip", "brotli", "system-proxy"] }
 # The Plugin owns the runtime its requests run on. `net` is the I/O driver
 # a socket needs, and `time` is the timer a timeout needs.
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
-# A call's arguments arrive as JSON text.
+# A call's arguments and the Host's resources arrive as JSON text, and a
+# search sends and answers JSON.
 serde_json = "1"
 # The fetch policy. `url` parses the URL a call names. `ipnet` holds the
 # ranges of addresses a fetch never reaches, and 2.10 is its first release
@@ -41,12 +41,11 @@ readabilityrs = "0.1"
 htmd = "0.5"
 # Derives the fetch tool's error types.
 thiserror = "2"
-# What the search sources under `crates/plugin-web/src` and
-# `crates/harness-gateway-client/src` are written against. `lib.rs`
-# declares none of those files as a module, so no crate inherits this
-# entry.
+# Derives the JSON forms of what the search tool reads and writes: its
+# arguments, the Gateway's reply, and the entry of the Host's resources
+# that names the Gateway.
 serde = { version = "1", features = ["derive"] }
-# Dev-only, for the fetch tool's tests: the mock servers they send real
+# Dev-only, for the tests of both tools: the mock servers they send real
 # requests to, and the compressed and streamed bodies those serve.
 axum = "0.8"
 flate2 = "1"

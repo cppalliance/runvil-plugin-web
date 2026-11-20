@@ -12,17 +12,17 @@
 //! The Host polls a call on a thread of its own, which has no context of
 //! the Plugin's runtime, and the client needs that context for its sockets,
 //! its timers, and its host lookups. So a call sends no request itself: it
-//! spawns the fetch as a task on the runtime and awaits the task's handle,
-//! which needs no context and wakes the call when the task ends. The task
-//! renders an HTML page on a thread the runtime starts for blocking work,
-//! so that the rendering, which only computes, holds no worker thread.
+//! runs the fetch as a task on the runtime, through [`task::run`], and
+//! awaits the task, which needs no context and wakes the call when it
+//! ends. The task renders an HTML page on a thread the runtime starts for
+//! blocking work, so that the rendering, which only computes, holds no
+//! worker thread.
 
 use std::sync::Arc;
 
 use reqwest::header::CONTENT_TYPE;
 use runvil_plugin_sdk::{ToolError, ToolErrorKind, ToolOutput};
 use tokio::runtime::Handle;
-use tokio::task::JoinHandle;
 use url::Url;
 
 use crate::config::{ConfigError, FetchConfig};
@@ -33,6 +33,7 @@ use crate::response::{
     Extraction, Route, classify, decode_body, extract_html, read_body_capped, read_body_truncating,
     truncate_to_chars,
 };
+use crate::task;
 use crate::url_policy::check_url;
 
 /// The result [`WebFetch::call`] returns: untrusted page text on success,
@@ -237,15 +238,6 @@ pub(crate) struct WebFetch {
     runtime: Handle,
 }
 
-/// A spawned fetch, aborted when the call awaiting it is dropped.
-struct AbortOnDrop(JoinHandle<CallResult>);
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 /// Runs `work` on a thread that the runtime starts for blocking work, and
 /// returns what it returns, or `None` when it panicked or the runtime shut
 /// down before it ran.
@@ -384,15 +376,12 @@ impl WebFetch {
             Err(err) => return soft_or_hard(&err),
         };
 
-        // The task's handle is all the call awaits, so the call is parked
-        // until the task ends, which wakes it.
-        let mut task = AbortOnDrop(
-            self.runtime
-                .spawn(self.client.clone().fetch(url, max_chars, raw)),
-        );
-        match (&mut task.0).await {
-            Ok(result) => result,
-            Err(_) => Err(did_not_finish()),
+        // The task is all the call awaits, so the call is parked until the
+        // task ends, which wakes it.
+        let fetch = self.client.clone().fetch(url, max_chars, raw);
+        match task::run(&self.runtime, fetch).await {
+            Some(result) => result,
+            None => Err(did_not_finish()),
         }
     }
 }

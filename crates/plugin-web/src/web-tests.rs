@@ -1,15 +1,16 @@
 //! Tests for the Plugin and its Pack: the Plugin loads and names itself,
-//! the causes a refused load names, the Pack it inserts, the tool an
-//! instance lists and the fetch tool's schema, the calls the tool refuses
-//! before any request is sent, a fetch from a server on this machine, the
-//! abort of a dropped call's fetch, and the threads the instance leaves
-//! behind when it is dropped, which are none.
+//! the causes a refused load names, the Pack it inserts, the two tools an
+//! instance lists and the fetch tool's schema, the calls the fetch tool
+//! refuses before any request is sent, a fetch from a server on this
+//! machine, the abort of a dropped call's fetch, and the threads the
+//! instance leaves behind when it is dropped, which are none. The tests of
+//! the search tool sit in the child module and share these fixtures.
 //!
 //! The tests of the Pack and its calls go through the SDK's fake Host.
 //! Every test is a plain `#[test]` with no tokio runtime of its own. So a
-//! fetch can only have run on the Plugin's runtime, and the Plugin is
+//! request can only have run on the Plugin's runtime, and the Plugin is
 //! dropped outside an async context, as a Host drops it. A server that a
-//! test fetches from runs on a thread the test owns.
+//! test sends a request to runs on a thread or a runtime the test owns.
 
 use std::cell::RefCell;
 use std::io::{Read, Write};
@@ -33,8 +34,8 @@ const PACK: &str = "runvil/web";
 
 /// How long a test waits for a server or a thread to report. A report
 /// that is coming comes far sooner. It is shorter than the 20 seconds a
-/// request has under either policy, so a connection that closes within it
-/// was not closed by that timeout.
+/// fetch has under either policy and the 30 seconds a search has, so a
+/// connection that closes within it was not closed by that timeout.
 const WAIT: Duration = Duration::from_secs(10);
 
 /// The ceiling on returned text under [`loopback_policy`]. It differs
@@ -106,9 +107,14 @@ fn fetch(pack: &PackRun<'_>, url: &str) -> Result<ToolOutput, ToolError> {
         .expect("the call follows the contract")
 }
 
-/// The parameter schema of the one tool `pack` lists.
-fn schema(pack: &PackRun<'_>) -> Value {
-    serde_json::from_str(&pack.tools()[0].parameters).expect("the schema is JSON")
+/// The parameter schema of the tool named `tool` that `pack` lists.
+fn schema(pack: &PackRun<'_>, tool: &str) -> Value {
+    let listed = pack
+        .tools()
+        .iter()
+        .find(|listed| listed.name == tool)
+        .unwrap_or_else(|| panic!("the Pack lists a tool named {tool}"));
+    serde_json::from_str(&listed.parameters).expect("the schema is JSON")
 }
 
 /// What a served connection does once the request has arrived.
@@ -134,6 +140,13 @@ enum Event {
 /// Returns the URL of that port under the host name `localhost`, which
 /// [`loopback_policy`] allows, and what the connection reports.
 fn serve(reply: Reply) -> (String, Receiver<Event>) {
+    let (port, events) = serve_on_a_port(reply);
+    (format!("http://localhost:{port}/"), events)
+}
+
+/// Serves one connection on a loopback port, on a thread of its own.
+/// Returns that port and what the connection reports.
+fn serve_on_a_port(reply: Reply) -> (u16, Receiver<Event>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port binds");
     let port = listener
         .local_addr()
@@ -162,7 +175,7 @@ fn serve(reply: Reply) -> (String, Receiver<Event>) {
             }
         }
     });
-    (format!("http://localhost:{port}/"), events)
+    (port, events)
 }
 
 /// Reads `socket` to the blank line that ends the head of a request.
@@ -216,11 +229,11 @@ fn the_plugin_inserts_the_one_pack_runvil_web() {
         .iter()
         .map(|pack| (pack.name.as_str(), pack.description.as_str()))
         .collect();
-    assert_eq!(packs, [(PACK, "Fetch pages from the web")]);
+    assert_eq!(packs, [(PACK, "Search the web and fetch pages")]);
 }
 
 #[test]
-fn an_instance_lists_the_one_tool_fetch_under_the_name_the_host_derives() {
+fn an_instance_lists_fetch_and_search_under_the_names_the_host_derives() {
     let loaded = loaded();
     let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
     let tools: Vec<(&str, Option<&str>, &str, bool)> = pack
@@ -235,16 +248,24 @@ fn an_instance_lists_the_one_tool_fetch_under_the_name_the_host_derives() {
             )
         })
         .collect();
-    // No wire name is set, so the Host derives `web_fetch` from the
-    // tool's id, `web/fetch`.
+    // No wire name is set, so the Host derives `web_fetch` and
+    // `web_search` from the tools' ids, `web/fetch` and `web/search`.
     assert_eq!(
         tools,
-        [(
-            "fetch",
-            None,
-            "Fetch a web page and return its main content as markdown.",
-            false
-        )]
+        [
+            (
+                "fetch",
+                None,
+                "Fetch a web page and return its main content as markdown.",
+                false
+            ),
+            (
+                "search",
+                None,
+                "Search the web and return a list of results (title, url, description).",
+                false
+            )
+        ]
     );
 }
 
@@ -255,7 +276,7 @@ fn the_fetch_tools_schema_is_the_one_a_model_reads_under_the_default_policy() {
     let loaded = loaded();
     let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
     assert_eq!(
-        schema(&pack),
+        schema(&pack, "fetch"),
         json!({
             "type": "object",
             "properties": {
@@ -284,7 +305,7 @@ fn a_custom_fetch_policy_reaches_the_fetch_tools_schema() {
     let loaded = loaded_for_loopback();
     let pack = loaded.new_pack(PACK).expect("the Pack instance is made");
     assert_eq!(
-        schema(&pack)["properties"]["max_chars"]["maximum"],
+        schema(&pack, "fetch")["properties"]["max_chars"]["maximum"],
         LOOPBACK_MAX_CHARS,
         "the fetch tool enforces the custom policy"
     );
@@ -544,3 +565,6 @@ fn dropping_the_instance_ends_every_thread_of_its_runtime() {
         "the drop returned before a thread of the runtime had ended"
     );
 }
+
+#[path = "web-tests-search.rs"]
+mod search;

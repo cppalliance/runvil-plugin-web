@@ -17,6 +17,11 @@
 //! (IPv4-mapped `::ffff:a.b.c.d` or IPv4-compatible `::a.b.c.d`) is reduced to
 //! its embedded IPv4 value and reclassified, so a non-global IPv4 in IPv6
 //! form cannot slip past the table.
+//!
+//! IPv6 is an allow-list: an address outside [`GLOBAL_UNICAST`],
+//! `2000::/3`, is refused even when no entry of the table names it, so a
+//! special range that the table misses fails closed. The table still holds
+//! the special ranges inside `2000::/3`.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -65,6 +70,7 @@ const BLOCKED_NETS: &[IpNet] = &[
     v6([0x64, 0xff9b, 0, 0, 0, 0, 0, 0], 96), // 64:ff9b::/96, NAT64
     v6([0x64, 0xff9b, 1, 0, 0, 0, 0, 0], 48), // 64:ff9b:1::/48, NAT64
     v6([0x100, 0, 0, 0, 0, 0, 0, 0], 64),     // 100::/64, discard-only
+    v6([0x2001, 0, 0, 0, 0, 0, 0, 0], 23),    // 2001::/23, IETF protocol assignments
     v6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 0], 32), // 2001:db8::/32, documentation
     v6([0x2002, 0, 0, 0, 0, 0, 0, 0], 16),    // 2002::/16, 6to4
     v6([0x3fff, 0, 0, 0, 0, 0, 0, 0], 20),    // 3fff::/20, documentation (RFC 9637)
@@ -73,6 +79,10 @@ const BLOCKED_NETS: &[IpNet] = &[
     v6([0xfec0, 0, 0, 0, 0, 0, 0, 0], 10),    // fec0::/10, deprecated site-local (RFC 3879)
     v6([0xff00, 0, 0, 0, 0, 0, 0, 0], 8),     // ff00::/8, multicast
 ];
+
+/// The IPv6 global unicast range, `2000::/3`. An IPv6 address outside it
+/// is refused whether or not [`BLOCKED_NETS`] names its range.
+const GLOBAL_UNICAST: IpNet = v6([0x2000, 0, 0, 0, 0, 0, 0, 0], 3);
 
 /// The IPv4 range whose first address has these four `octets`, with a
 /// prefix of `prefix` bits. In a constant, a prefix over 32 fails the
@@ -104,7 +114,9 @@ fn embedded_ipv4(ip: IpAddr) -> Option<Ipv4Addr> {
 ///
 /// The address is checked directly, then, if it re-encodes an IPv4 address, its
 /// embedded IPv4 value is checked too, so a non-global IPv4 in an IPv6 hat is
-/// caught even where the table has no matching IPv6 entry.
+/// caught even where the table has no matching IPv6 entry. Last, an IPv6
+/// address outside [`GLOBAL_UNICAST`] is blocked, reported as outside
+/// `2000::/3`.
 fn builtin_blocked(ip: IpAddr) -> Option<String> {
     if let Some(net) = BLOCKED_NETS.iter().find(|net| net.contains(&ip)) {
         return Some(net.to_string());
@@ -114,6 +126,9 @@ fn builtin_blocked(ip: IpAddr) -> Option<String> {
         if let Some(net) = BLOCKED_NETS.iter().find(|net| net.contains(&v4)) {
             return Some(format!("{net} (embedded ipv4 {v4})"));
         }
+    }
+    if ip.is_ipv6() && !GLOBAL_UNICAST.contains(&ip) {
+        return Some(format!("outside {GLOBAL_UNICAST}"));
     }
     None
 }
@@ -210,6 +225,7 @@ mod tests {
         "64:ff9b::/96",   // NAT64
         "64:ff9b:1::/48", // NAT64
         "100::/64",       // discard-only
+        "2001::/23",      // IETF protocol assignments
         "2001:db8::/32",  // documentation
         "2002::/16",      // 6to4
         "3fff::/20",      // documentation (RFC 9637)
@@ -272,6 +288,11 @@ mod tests {
                 "64:ff9b:1:ffff:ffff:ffff:ffff:ffff",
             ),
             ("100::/64", "100::", "100::ffff:ffff:ffff:ffff"),
+            (
+                "2001::/23",
+                "2001::",
+                "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff",
+            ),
             (
                 "2001:db8::/32",
                 "2001:db8::",
@@ -361,6 +382,51 @@ mod tests {
         for addr in allowed {
             assert!(addr_allowed(ip(addr), &cfg), "{addr} must be allowed");
         }
+    }
+
+    /// IPv6 outside `2000::/3` is refused even where no table entry names
+    /// its range, and IPv6 inside it that no entry names is allowed.
+    #[test]
+    fn ipv6_outside_global_unicast_is_refused() {
+        let cfg = FetchConfig::default();
+
+        let refused = [
+            "1::1",                                    // below 2000::/3, no table entry
+            "1fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", // last address below 2000::/3
+            "4000::",                                  // first address above 2000::/3
+            "8000::1",
+            "c000::1",
+            "fb00::1", // below fc00::/7, no table entry
+        ];
+        for addr in refused {
+            assert!(!addr_allowed(ip(addr), &cfg), "{addr} must be denied");
+        }
+
+        let allowed = [
+            "2000::1",                                 // first block of 2000::/3
+            "2001:200::1",                             // just past 2001::/23
+            "2400:cb00:2048:1::c629:d7a2",             // ordinary global unicast
+            "3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", // last address of 2000::/3
+        ];
+        for addr in allowed {
+            assert!(addr_allowed(ip(addr), &cfg), "{addr} must be allowed");
+        }
+    }
+
+    /// The range that blocks an IPv6 address outside `2000::/3` with no
+    /// table entry names the rule.
+    #[test]
+    fn blocked_range_names_the_global_unicast_rule() {
+        let cfg = FetchConfig::default();
+        assert_eq!(
+            super::blocked_range(ip("4000::1"), &cfg).as_deref(),
+            Some("outside 2000::/3")
+        );
+        assert_eq!(
+            super::blocked_range(ip("fe80::1"), &cfg).as_deref(),
+            Some("fe80::/10"),
+            "a table entry is reported before the 2000::/3 rule"
+        );
     }
 
     #[test]

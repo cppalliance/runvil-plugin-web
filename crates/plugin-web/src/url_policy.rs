@@ -1,8 +1,9 @@
 //! URL admission policy applied before any network access.
 //!
 //! [`check_url`] parses a model-supplied URL and rejects anything the policy
-//! forbids (a bad scheme, embedded userinfo, a disallowed port, or a
-//! non-global IP-literal host) before a request is ever made. It runs at the top
+//! forbids (a URL over [`MAX_URL_CHARS`], a bad scheme, embedded userinfo, a
+//! disallowed port, or a non-global IP-literal host) before a request is ever
+//! made. It runs at the top
 //! of the fetch path and again on every redirect target, so a rejected URL
 //! never reaches the network.
 //!
@@ -21,20 +22,26 @@ use crate::address::{addr_allowed_for_host, blocked_range};
 use crate::config::FetchConfig;
 use crate::error::FetchError;
 
+/// The longest URL, in characters, that [`check_url`] admits. It bounds how
+/// much data one request can carry out in its URL.
+pub(crate) const MAX_URL_CHARS: usize = 2000;
+
 /// Parses `raw` and enforces the URL-admission policy in `config`.
 ///
 /// On success the returned [`Url`] has its fragment dropped (a fragment never
 /// travels to the server) and its query left untouched. The checks run before
 /// any network access, so a rejected URL costs no request.
 ///
-/// The policy: the scheme must be `https`, or `http` when the config
+/// The policy: the URL must be at most [`MAX_URL_CHARS`] characters; the
+/// scheme must be `https`, or `http` when the config
 /// permits it; the URL must have no userinfo; the effective port must be
 /// on the allowlist; and an IP-literal host is refused unless literals are
 /// enabled, in which case the literal's address is classified against the
 /// address policy and a non-global address is still refused.
 ///
 /// # Errors
-/// Returns [`FetchError::InvalidUrl`] if `raw` does not parse;
+/// Returns [`FetchError::UrlTooLong`] if `raw` is over [`MAX_URL_CHARS`]
+/// characters; [`FetchError::InvalidUrl`] if `raw` does not parse;
 /// [`FetchError::BlockedScheme`] if the scheme is not permitted;
 /// [`FetchError::Userinfo`] if the URL contains a `user:pass@` component;
 /// [`FetchError::BlockedPort`] if the effective port is not on the allowlist;
@@ -42,6 +49,11 @@ use crate::error::FetchError;
 /// allowed; and [`FetchError::BlockedAddress`] if an admitted literal names a
 /// non-global address.
 pub(crate) fn check_url(raw: &str, config: &FetchConfig) -> Result<Url, FetchError> {
+    let length = raw.chars().count();
+    if length > MAX_URL_CHARS {
+        return Err(FetchError::UrlTooLong { length });
+    }
+
     let mut url = Url::parse(raw).map_err(FetchError::InvalidUrl)?;
 
     let scheme = url.scheme();
@@ -96,7 +108,7 @@ pub(crate) fn check_url(raw: &str, config: &FetchConfig) -> Result<Url, FetchErr
 mod tests {
     use std::net::IpAddr;
 
-    use super::check_url;
+    use super::{MAX_URL_CHARS, check_url};
     use crate::config::FetchConfig;
     use crate::error::FetchError;
 
@@ -105,6 +117,43 @@ mod tests {
         let err = check_url(raw, config)
             .expect_err(&format!("expected {raw} to be rejected before any network"));
         assert!(want(&err), "unexpected error for {raw}: {err}");
+    }
+
+    /// `https://example.com/` followed by `a` to `total` characters.
+    fn url_of_length(total: usize) -> String {
+        let base = "https://example.com/";
+        format!("{base}{}", "a".repeat(total - base.len()))
+    }
+
+    #[test]
+    fn accepts_a_url_at_the_length_limit() {
+        let raw = url_of_length(MAX_URL_CHARS);
+        check_url(&raw, &FetchConfig::default()).expect("a URL of 2000 characters is admitted");
+    }
+
+    #[test]
+    fn rejects_a_url_over_the_length_limit() {
+        let raw = url_of_length(MAX_URL_CHARS + 1);
+        let err = check_url(&raw, &FetchConfig::default())
+            .expect_err("a URL of 2001 characters is refused");
+        assert!(
+            matches!(err, FetchError::UrlTooLong { length: 2001 }),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            err.model_facing(),
+            "the URL is 2001 characters long, and the limit is 2000"
+        );
+    }
+
+    /// The limit counts characters, not bytes.
+    #[test]
+    fn the_length_limit_counts_characters() {
+        let base = "https://example.com/";
+        let raw = format!("{base}{}", "é".repeat(MAX_URL_CHARS - base.len()));
+        assert!(raw.len() > MAX_URL_CHARS, "the URL is longer in bytes");
+        check_url(&raw, &FetchConfig::default())
+            .expect("a URL of 2000 characters is admitted whatever its bytes");
     }
 
     #[test]

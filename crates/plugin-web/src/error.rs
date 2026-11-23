@@ -81,6 +81,13 @@ impl std::fmt::Display for SafeUrl {
 /// secret survives into `Debug` or `Display`.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum FetchError {
+    /// The URL is longer than the admission limit.
+    #[error("the URL is {length} characters long, and the limit is {limit}", limit = crate::url_policy::MAX_URL_CHARS)]
+    UrlTooLong {
+        /// The URL's length in characters.
+        length: usize,
+    },
+
     /// The URL could not be parsed.
     #[error("invalid url")]
     InvalidUrl(#[source] url::ParseError),
@@ -247,6 +254,7 @@ impl FetchError {
             | FetchError::RedirectRefused { .. }
             | FetchError::BlockedScheme(_) => Disposition::SoftOutput,
             FetchError::InvalidUrl(_)
+            | FetchError::UrlTooLong { .. }
             | FetchError::Userinfo
             | FetchError::BlockedPort(_)
             | FetchError::IpLiteral(_)
@@ -352,8 +360,9 @@ mod tests {
             );
         }
 
-        let hard: [FetchError; 6] = [
+        let hard: [FetchError; 7] = [
             FetchError::InvalidUrl(parse),
+            FetchError::UrlTooLong { length: 2001 },
             FetchError::Userinfo,
             FetchError::BlockedPort(22),
             FetchError::IpLiteral("1.2.3.4".into()),

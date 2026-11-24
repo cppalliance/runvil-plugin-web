@@ -32,11 +32,15 @@ url.workspace = true
 ipnet.workspace = true
 # The rendering of a response: `mime` reads its content type,
 # `encoding_rs` decodes its body, `readabilityrs` picks the article out of
-# an HTML page, and `htmd` renders HTML to markdown.
+# an HTML page, and `htmd` renders HTML to markdown. `html5ever` and
+# `markup5ever_rcdom` parse the page so its links can be made absolute
+# before either renders it.
 mime.workspace = true
 encoding_rs.workspace = true
 readabilityrs.workspace = true
 htmd.workspace = true
+html5ever.workspace = true
+markup5ever_rcdom.workspace = true
 # Derives the fetch tool's error types.
 thiserror.workspace = true
 

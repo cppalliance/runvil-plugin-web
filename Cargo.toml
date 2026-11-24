@@ -34,11 +34,15 @@ ipnet = "2.10"
 # The fetch tool's rendering of a response. `mime` reads its content type,
 # `encoding_rs` decodes its body under the charset it declares,
 # `readabilityrs` picks the article out of an HTML page, and `htmd`
-# renders HTML to markdown.
+# renders HTML to markdown. `html5ever` and `markup5ever_rcdom` are the
+# parser and tree `htmd` builds on, at its versions, so resolving a page's
+# links before rendering adds no crate to the tree.
 mime = "0.3"
 encoding_rs = "0.8"
 readabilityrs = "0.1"
 htmd = "0.5"
+html5ever = "0.38"
+markup5ever_rcdom = "0.38"
 # Derives the fetch tool's error types.
 thiserror = "2"
 # Derives the JSON forms of what the search tool reads and writes: its

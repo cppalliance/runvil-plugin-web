@@ -5,9 +5,15 @@
 //! read, so a binary or absent type is refused without downloading it. HTML and
 //! structured text are read all-or-nothing under the byte cap; genuinely flat
 //! text is truncated at the cap. Decoding honors the declared charset, and HTML
-//! is rendered to markdown with readability plus a whole-page fallback.
+//! is rendered to markdown with readability plus a whole-page fallback, after
+//! every relative link in it is resolved against the URL it was served from.
 
+use std::rc::Rc;
+
+use html5ever::serialize::{SerializeOpts, serialize};
+use markup5ever_rcdom::{Handle, NodeData, SerializableHandle};
 use readabilityrs::{Readability, ReadabilityOptions};
+use url::Url;
 
 use crate::error::{FetchError, SafeUrl};
 
@@ -137,7 +143,14 @@ pub(crate) fn decode_body(
 /// than [`MIN_CONTENT_LEN`] characters, the whole document is converted instead
 /// and the mode is [`Extraction::RawHtml`]. Rendering never fails: the worst
 /// case is an empty string when even the whole-page conversion produces no text.
-pub(crate) fn extract_html(html: &str, base_url: Option<&str>, raw: bool) -> (String, Extraction) {
+///
+/// Before either renders the page, each relative link and image source in it
+/// is made absolute against `base_url`, the URL the page was served from, as
+/// [`absolutize`] says, so a model can fetch what the markdown links to.
+pub(crate) fn extract_html(html: &str, base_url: Option<&Url>, raw: bool) -> (String, Extraction) {
+    let absolute = base_url.and_then(|base| absolutize(html, base));
+    let html = absolute.as_deref().unwrap_or(html);
+
     if raw {
         return (htmd::convert(html).unwrap_or_default(), Extraction::RawHtml);
     }
@@ -147,7 +160,7 @@ pub(crate) fn extract_html(html: &str, base_url: Option<&str>, raw: bool) -> (St
         ..ReadabilityOptions::default()
     };
 
-    let article_markdown = Readability::new(html, base_url, Some(options))
+    let article_markdown = Readability::new(html, base_url.map(Url::as_str), Some(options))
         .ok()
         .and_then(Readability::parse)
         .and_then(|article| {
@@ -167,6 +180,87 @@ pub(crate) fn extract_html(html: &str, base_url: Option<&str>, raw: bool) -> (St
         htmd::convert(html).unwrap_or(article_markdown),
         Extraction::RawHtml,
     )
+}
+
+/// Returns `html` with every relative `href` of an `a` and `src` of an `img`
+/// resolved to an absolute `http` or `https` URL, or `None` when the page does
+/// not parse back into text.
+///
+/// A reference resolves against the page's first `<base href>` when it names an
+/// `http` or `https` URL, and against `page_url` otherwise, as a browser
+/// resolves it. A reference that is already absolute, such as a `mailto:`
+/// link, one that is only a fragment, which points into the page itself, and
+/// one that does not resolve to `http` or `https` are left as written.
+fn absolutize(html: &str, page_url: &Url) -> Option<String> {
+    let document = htmd::HtmlToMarkdown::new().html_to_tree(html).ok()?;
+    let base = document_base(&document, page_url);
+    for node in descendants(&document) {
+        let NodeData::Element { name, attrs, .. } = &node.data else {
+            continue;
+        };
+        let target = match &*name.local {
+            "a" => "href",
+            "img" => "src",
+            _ => continue,
+        };
+        for attr in attrs.borrow_mut().iter_mut() {
+            if &*attr.name.local == target
+                && let Some(url) = resolve(&attr.value, &base)
+            {
+                attr.value = url.as_str().into();
+            }
+        }
+    }
+    let mut out = Vec::new();
+    serialize(
+        &mut out,
+        &SerializableHandle::from(document),
+        SerializeOpts::default(),
+    )
+    .ok()?;
+    String::from_utf8(out).ok()
+}
+
+/// The URL a page's relative references resolve against: its first
+/// `<base href>`, resolved against `page_url`, when that is `http` or `https`,
+/// and `page_url` otherwise.
+fn document_base(document: &Handle, page_url: &Url) -> Url {
+    descendants(document)
+        .find_map(|node| match &node.data {
+            NodeData::Element { name, attrs, .. } if &*name.local == "base" => attrs
+                .borrow()
+                .iter()
+                .find(|attr| &*attr.name.local == "href")
+                .map(|attr| attr.value.trim().to_owned()),
+            _ => None,
+        })
+        .and_then(|href| page_url.join(&href).ok())
+        .filter(|base| matches!(base.scheme(), "http" | "https"))
+        .unwrap_or_else(|| page_url.clone())
+}
+
+/// Resolves `reference` against `base`, or `None` when it is empty, already
+/// absolute, only a fragment, or resolves to a scheme other than `http` or
+/// `https`.
+fn resolve(reference: &str, base: &Url) -> Option<Url> {
+    let reference = reference.trim();
+    if reference.is_empty() || reference.starts_with('#') || Url::parse(reference).is_ok() {
+        return None;
+    }
+    let url = base.join(reference).ok()?;
+    matches!(url.scheme(), "http" | "https").then_some(url)
+}
+
+/// Every node under `root`, in document order, walked with a stack rather than
+/// recursion, so a page nested thousands of levels deep cannot overflow the
+/// thread's stack.
+fn descendants(root: &Handle) -> impl Iterator<Item = Handle> {
+    let mut stack = vec![Rc::clone(root)];
+    std::iter::from_fn(move || {
+        let node = stack.pop()?;
+        stack.extend(node.children.borrow().iter().rev().cloned());
+        Some(node)
+    })
 }
 
 /// Reads a response body into memory, truncating at a decompressed-byte cap.
@@ -263,7 +357,26 @@ pub(crate) fn truncate_to_chars(text: &str, max_chars: usize) -> (&str, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_html;
+    use url::Url;
+
+    use super::{Extraction, extract_html};
+
+    /// Parses `s` into a [`Url`], panicking with context on failure.
+    fn url(s: &str) -> Url {
+        Url::parse(s).expect("test url must parse")
+    }
+
+    /// A page whose article readability keeps, with `links` as its last
+    /// paragraph.
+    fn article(links: &str) -> String {
+        let prose = "<p>This paragraph is long enough for the extractor to treat it as \
+                     real article content rather than navigation or boilerplate.</p>"
+            .repeat(4);
+        format!(
+            "<html><head><title>T</title></head><body><article><h1>Title</h1>\
+             {prose}<p>{links}</p></article></body></html>"
+        )
+    }
 
     #[test]
     fn extracts_article_body_and_drops_boilerplate() {
@@ -285,7 +398,8 @@ mod tests {
             </html>
         "#;
 
-        let (markdown, _mode) = extract_html(html, Some("https://example.com/article"), false);
+        let (markdown, _mode) =
+            extract_html(html, Some(&url("https://example.com/article")), false);
 
         assert!(
             markdown.contains("first substantial paragraph"),
@@ -311,5 +425,94 @@ mod tests {
             markdown.contains("short"),
             "fallback should preserve the page text, got: {markdown}"
         );
+    }
+
+    #[test]
+    fn an_article_links_absolutely_to_what_it_names() {
+        let html = article(
+            r#"See <a href="/learn">learn</a>, <a href="guide/intro.html">intro</a>, and <img src="../img/a.png" alt="a">."#,
+        );
+
+        let (markdown, mode) = extract_html(
+            &html,
+            Some(&url("https://www.rust-lang.org/tools/install")),
+            false,
+        );
+
+        assert_eq!(mode, Extraction::Readability, "got: {markdown}");
+        for link in [
+            "(https://www.rust-lang.org/learn)",
+            "(https://www.rust-lang.org/tools/guide/intro.html)",
+            "(https://www.rust-lang.org/img/a.png)",
+        ] {
+            assert!(markdown.contains(link), "expected {link} in: {markdown}");
+        }
+    }
+
+    #[test]
+    fn a_raw_page_links_absolutely_to_what_it_names() {
+        let html = r#"<nav><a href="/docs">Docs</a> <a href="//cdn.example.org/x">CDN</a></nav>"#;
+
+        let (markdown, mode) = extract_html(html, Some(&url("https://example.com/a/b")), true);
+
+        assert_eq!(mode, Extraction::RawHtml);
+        assert!(
+            markdown.contains("(https://example.com/docs)"),
+            "got: {markdown}"
+        );
+        assert!(
+            markdown.contains("(https://cdn.example.org/x)"),
+            "got: {markdown}"
+        );
+    }
+
+    #[test]
+    fn a_base_element_moves_where_links_resolve() {
+        let html = r#"<head><base href="https://mirror.example.net/v2/"></head><body><a href="page">Page</a></body>"#;
+
+        let (markdown, _mode) = extract_html(html, Some(&url("https://example.com/a/b")), true);
+
+        assert!(
+            markdown.contains("(https://mirror.example.net/v2/page)"),
+            "got: {markdown}"
+        );
+    }
+
+    #[test]
+    fn a_base_element_that_is_not_http_is_ignored() {
+        let html =
+            r#"<head><base href="ftp://example.net/"></head><body><a href="page">Page</a></body>"#;
+
+        let (markdown, _mode) = extract_html(html, Some(&url("https://example.com/a/b")), true);
+
+        assert!(
+            markdown.contains("(https://example.com/a/page)"),
+            "got: {markdown}"
+        );
+    }
+
+    #[test]
+    fn links_that_need_no_resolving_stay_as_written() {
+        let html = r##"<p><a href="#top">Top</a> <a href="mailto:a@example.com">Mail</a> <a href="https://other.example/x">Other</a> <a href="javascript:void(0)">Js</a></p>"##;
+
+        let (markdown, _mode) = extract_html(html, Some(&url("https://example.com/a")), true);
+
+        for link in [
+            "(#top)",
+            "(mailto:a@example.com)",
+            "(https://other.example/x)",
+            "(javascript:void",
+        ] {
+            assert!(markdown.contains(link), "expected {link} in: {markdown}");
+        }
+    }
+
+    #[test]
+    fn without_a_base_url_links_stay_as_written() {
+        let html = r#"<p><a href="/docs">Docs</a></p>"#;
+
+        let (markdown, _mode) = extract_html(html, None, true);
+
+        assert!(markdown.contains("(/docs)"), "got: {markdown}");
     }
 }

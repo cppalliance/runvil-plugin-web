@@ -184,7 +184,7 @@ impl FetchClient {
                     Ok(d) => d,
                     Err(e) => return soft_or_hard(&e),
                 };
-                let base_url = final_url.to_string();
+                let base_url = final_url.clone();
                 let rendering =
                     on_blocking_thread(move || extract_html(&decoded, Some(&base_url), raw));
                 let Some((markdown, extraction)) = rendering.await else {

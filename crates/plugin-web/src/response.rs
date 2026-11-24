@@ -16,6 +16,7 @@ use readabilityrs::{Readability, ReadabilityOptions};
 use url::Url;
 
 use crate::error::{FetchError, SafeUrl};
+use crate::url_policy::MAX_URL_CHARS;
 
 /// The minimum extracted length below which the whole-page fallback fires.
 const MIN_CONTENT_LEN: usize = 100;
@@ -190,10 +191,19 @@ pub(crate) fn extract_html(html: &str, base_url: Option<&Url>, raw: bool) -> (St
 /// `http` or `https` URL, and against `page_url` otherwise, as a browser
 /// resolves it. A reference that is already absolute, such as a `mailto:`
 /// link, one that is only a fragment, which points into the page itself, and
-/// one that does not resolve to `http` or `https` are left as written.
+/// one that does not resolve to `http` or `https` are left as written, as is
+/// one whose absolute form [`check_url`](crate::url_policy::check_url) would
+/// refuse as too long.
+///
+/// Resolving lengthens a link by up to the length of the base, which the page
+/// chooses with `<base href>`, so a page of many short links could otherwise
+/// grow far past the byte cap of its body. The links resolve in document order
+/// until they have added as many bytes as the page holds, and the rest stay as
+/// written, so the result is at most about twice the size of `html`.
 fn absolutize(html: &str, page_url: &Url) -> Option<String> {
     let document = htmd::HtmlToMarkdown::new().html_to_tree(html).ok()?;
     let base = document_base(&document, page_url);
+    let mut budget = html.len();
     for node in descendants(&document) {
         let NodeData::Element { name, attrs, .. } = &node.data else {
             continue;
@@ -206,7 +216,10 @@ fn absolutize(html: &str, page_url: &Url) -> Option<String> {
         for attr in attrs.borrow_mut().iter_mut() {
             if &*attr.name.local == target
                 && let Some(url) = resolve(&attr.value, &base)
+                && let Some(rest) =
+                    budget.checked_sub(url.as_str().len().saturating_sub(attr.value.len()))
             {
+                budget = rest;
                 attr.value = url.as_str().into();
             }
         }
@@ -241,14 +254,15 @@ fn document_base(document: &Handle, page_url: &Url) -> Url {
 
 /// Resolves `reference` against `base`, or `None` when it is empty, already
 /// absolute, only a fragment, or resolves to a scheme other than `http` or
-/// `https`.
+/// `https` or to a URL over [`MAX_URL_CHARS`], which no fetch would take.
 fn resolve(reference: &str, base: &Url) -> Option<Url> {
     let reference = reference.trim();
     if reference.is_empty() || reference.starts_with('#') || Url::parse(reference).is_ok() {
         return None;
     }
     let url = base.join(reference).ok()?;
-    matches!(url.scheme(), "http" | "https").then_some(url)
+    // A serialized URL is ASCII, so its byte length is its character count.
+    (matches!(url.scheme(), "http" | "https") && url.as_str().len() <= MAX_URL_CHARS).then_some(url)
 }
 
 /// Every node under `root`, in document order, walked with a stack rather than
@@ -359,7 +373,8 @@ pub(crate) fn truncate_to_chars(text: &str, max_chars: usize) -> (&str, bool) {
 mod tests {
     use url::Url;
 
-    use super::{Extraction, extract_html};
+    use super::{Extraction, absolutize, extract_html};
+    use crate::url_policy::MAX_URL_CHARS;
 
     /// Parses `s` into a [`Url`], panicking with context on failure.
     fn url(s: &str) -> Url {
@@ -514,5 +529,40 @@ mod tests {
         let (markdown, _mode) = extract_html(html, None, true);
 
         assert!(markdown.contains("(/docs)"), "got: {markdown}");
+    }
+
+    #[test]
+    fn a_link_too_long_to_fetch_stays_as_written() {
+        let base = format!("https://example.com/{}/", "a".repeat(MAX_URL_CHARS));
+        let html =
+            format!(r#"<head><base href="{base}"></head><body><a href="page">Page</a></body>"#);
+
+        let (markdown, _mode) = extract_html(&html, Some(&url("https://example.com/")), true);
+
+        assert!(markdown.contains("(page)"), "got: {markdown}");
+    }
+
+    #[test]
+    fn resolving_at_most_doubles_the_page() {
+        let base = format!("https://example.com/{}/", "a".repeat(1_900));
+        let links = r#"<a href="b">x</a>"#.repeat(1_000);
+        let html = format!(r#"<html><head><base href="{base}"></head><body>{links}</body></html>"#);
+
+        let out = absolutize(&html, &url("https://example.com/")).expect("the page serializes");
+
+        assert!(
+            out.len() <= 2 * html.len(),
+            "{} bytes resolved from {}",
+            out.len(),
+            html.len()
+        );
+        assert!(
+            out.contains(&format!(r#"href="{base}b""#)),
+            "the first links resolve"
+        );
+        assert!(
+            out.ends_with(r#"<a href="b">x</a></body></html>"#),
+            "the last link stays as written"
+        );
     }
 }

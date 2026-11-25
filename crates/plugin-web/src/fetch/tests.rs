@@ -453,5 +453,7 @@ async fn a_fetch_whose_call_is_dropped_aborts_its_spawned_task() {
 
 #[path = "tests-body.rs"]
 mod body;
+#[path = "tests-golden.rs"]
+mod golden;
 #[path = "tests-policy.rs"]
 mod policy;

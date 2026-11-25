@@ -39,8 +39,8 @@ ipnet = "2.10"
 # links before rendering adds no crate to the tree.
 mime = "0.3"
 encoding_rs = "0.8"
-readabilityrs = "0.1"
-htmd = "0.5"
+readabilityrs = "0.1.4"
+htmd = "0.5.6"
 html5ever = "0.38"
 markup5ever_rcdom = "0.38"
 # Derives the fetch tool's error types.

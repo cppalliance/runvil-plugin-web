@@ -565,4 +565,24 @@ mod tests {
             "the last link stays as written"
         );
     }
+
+    #[test]
+    fn a_table_with_a_long_cell_stays_under_four_times_its_size_on_both_paths() {
+        let cell = "word ".repeat(1_000);
+        let rows = format!("<tr><td>{cell}</td><td>short</td></tr>").repeat(4);
+        let html = format!(
+            "<html><body><table><tr><th>Long</th><th>Short</th></tr>{rows}</table></body></html>"
+        );
+
+        for raw in [false, true] {
+            let (markdown, _mode) = extract_html(&html, Some(&url("https://example.com/")), raw);
+
+            assert!(
+                markdown.len() < 4 * html.len(),
+                "raw {raw}: {} bytes from {}",
+                markdown.len(),
+                html.len()
+            );
+        }
+    }
 }

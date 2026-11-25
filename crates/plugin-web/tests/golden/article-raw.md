@@ -16,6 +16,10 @@ Read the [requirements page](http://localhost:PORT/docs/requirements.html) first
 
 ![A terminal after a successful install](http://localhost:PORT/guide/install/images/terminal.png)
 
+![Where the toolchain installs its files](data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7)
+
+![The release channels](http://localhost:PORT/guide/install/images/channels-small.png)
+
 ## Install the packages
 
 Run these two commands. The first refreshes the package index, and the second installs `curl`, which the installer needs:

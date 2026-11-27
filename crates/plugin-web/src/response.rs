@@ -20,8 +20,22 @@ use url::Url;
 use crate::error::{FetchError, SafeUrl};
 use crate::url_policy::MAX_URL_CHARS;
 
-/// The minimum extracted length below which the whole-page fallback fires.
-const MIN_CONTENT_LEN: usize = 100;
+/// The length in characters below which an extracted article is replaced by
+/// the whole page, however much of the page it is.
+const MIN_ARTICLE_CHARS: usize = 250;
+
+/// The length in characters below which an extracted article is replaced by
+/// the whole page when it is also under [`MIN_ARTICLE_SHARE`] of it.
+const SHORT_ARTICLE_CHARS: usize = 3_000;
+
+/// The share of the whole page, as `1 / MIN_ARTICLE_SHARE`, under which a short
+/// article is replaced by the whole page: 5 for 20%.
+const MIN_ARTICLE_SHARE: usize = 5;
+
+/// The elements the whole-page rendering leaves out, because their text is
+/// code or style rules rather than content of the page. `noscript` stays,
+/// because some sites, such as Discourse forums, serve their content in it.
+const SKIPPED_TAGS: [&str; 2] = ["script", "style"];
 
 /// How a response body was turned into the returned text.
 ///
@@ -140,12 +154,15 @@ pub(crate) fn decode_body(
 
 /// Renders an HTML page to markdown, reporting how it was produced.
 ///
-/// When `raw` is true the whole document is converted with [`htmd::convert`] and
-/// the mode is [`Extraction::RawHtml`], skipping article extraction entirely.
-/// Otherwise [`readabilityrs`] isolates the main article; if that yields fewer
-/// than [`MIN_CONTENT_LEN`] characters, the whole document is converted instead
-/// and the mode is [`Extraction::RawHtml`]. Rendering never fails: the worst
-/// case is an empty string when even the whole-page conversion produces no text.
+/// When `raw` is true the whole document is rendered by [`whole_page`] and the
+/// mode is [`Extraction::RawHtml`], skipping article extraction entirely.
+/// Otherwise [`readabilityrs`] isolates the main article, and the whole page
+/// is returned in its place, with the mode [`Extraction::RawHtml`], when the
+/// article is under [`MIN_ARTICLE_CHARS`] characters, or under
+/// [`SHORT_ARTICLE_CHARS`] and under a fifth of the whole page: such an
+/// article is a fragment of a page that is not an article, such as a profile
+/// or a list of links. Rendering never fails: the worst case is an empty
+/// string when even the whole-page rendering produces no text.
 ///
 /// Each relative link and image source in what is rendered is made absolute
 /// against `base_url`, the URL the page was served from, as [`absolutize`]
@@ -158,18 +175,16 @@ pub(crate) fn extract_html(html: &str, base_url: Option<&Url>, raw: bool) -> (St
         .as_ref()
         .zip(base_url)
         .and_then(|(document, page_url)| LinkBase::of(document, page_url));
-    let whole_page = |document: Option<Handle>| {
-        document
+    let render_whole_page = |document: Option<Handle>| {
+        let html = document
             .zip(base.as_ref())
             .and_then(|(document, base)| absolutize(document, base, html.len()))
-            .unwrap_or_else(|| html.to_owned())
+            .unwrap_or_else(|| html.to_owned());
+        whole_page(&html)
     };
 
     if raw {
-        return (
-            htmd::convert(&whole_page(document)).unwrap_or_default(),
-            Extraction::RawHtml,
-        );
+        return (render_whole_page(document), Extraction::RawHtml);
     }
 
     let options = ReadabilityOptions::default();
@@ -193,14 +208,28 @@ pub(crate) fn extract_html(html: &str, base_url: Option<&Url>, raw: bool) -> (St
         })
         .unwrap_or_default();
 
-    if article_markdown.trim().len() >= MIN_CONTENT_LEN {
+    let article_chars = article_markdown.trim().chars().count();
+    if article_chars >= SHORT_ARTICLE_CHARS {
         return (article_markdown, Extraction::Readability);
     }
+    let page_markdown = render_whole_page(document);
+    let page_chars = page_markdown.trim().chars().count();
+    if article_chars >= MIN_ARTICLE_CHARS && article_chars * MIN_ARTICLE_SHARE >= page_chars {
+        return (article_markdown, Extraction::Readability);
+    }
+    if page_chars == 0 {
+        return (article_markdown, Extraction::Readability);
+    }
+    (page_markdown, Extraction::RawHtml)
+}
 
-    (
-        htmd::convert(&whole_page(document)).unwrap_or(article_markdown),
-        Extraction::RawHtml,
-    )
+/// Renders a whole HTML document to markdown, leaving out [`SKIPPED_TAGS`].
+fn whole_page(html: &str) -> String {
+    htmd::HtmlToMarkdown::builder()
+        .skip_tags(SKIPPED_TAGS.to_vec())
+        .build()
+        .convert(html)
+        .unwrap_or_default()
 }
 
 /// Parses `html` into the tree `htmd` renders from.
@@ -418,6 +447,8 @@ pub(crate) fn truncate_to_chars(text: &str, max_chars: usize) -> (&str, bool) {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use url::Url;
 
     use super::{Extraction, LinkBase, absolutize, extract_html, parse};
@@ -707,6 +738,119 @@ mod tests {
                 "raw {raw}: {} bytes from {}",
                 markdown.len(),
                 html.len()
+            );
+        }
+    }
+
+    const PROFILE: &str = r#"<!doctype html>
+<html>
+  <head>
+    <title>Jane Doe</title>
+    <style>.card { color: red; }</style>
+    <script type="application/json">{"featureFlags":["one","two"]}</script>
+  </head>
+  <body>
+    <nav><a href="/">Home</a> <a href="/login">Sign in</a></nav>
+    <div class="profile">
+      <h1>Jane Doe</h1>
+      <ul>
+        <li>Turku, Finland</li>
+        <li><a href="https://example.com/jane">example.com/jane</a></li>
+      </ul>
+    </div>
+    <div class="pinned">
+      <h2>Pinned</h2>
+      <ol>
+        <li>
+          <p>Neon: Serverless Postgres. We separated storage and compute to offer autoscaling, code-like database branching, and scale to zero.</p>
+        </li>
+      </ol>
+    </div>
+  </body>
+</html>"#;
+
+    #[test]
+    fn default_result_keeps_the_profile() {
+        let (markdown, mode) = extract_html(PROFILE, None, false);
+
+        assert!(
+            markdown.contains("Jane Doe") && markdown.contains("Turku, Finland"),
+            "mode {mode:?}, got: {markdown}"
+        );
+    }
+
+    #[test]
+    fn raw_result_holds_no_script_or_style_text() {
+        let (markdown, _mode) = extract_html(PROFILE, None, true);
+
+        assert!(
+            !markdown.contains("color: red") && !markdown.contains("featureFlags"),
+            "got: {markdown}"
+        );
+    }
+
+    /// A page with an article of `prose_repeats` copies of one sentence, about
+    /// 90 characters each, and a list of `links` stories outside it.
+    fn article_beside_a_list(prose_repeats: usize, links: usize) -> String {
+        let prose =
+            "This sentence belongs to the article, which a reader came to the page to read. "
+                .repeat(prose_repeats);
+        let mut list = String::new();
+        for i in 0..links {
+            write!(
+                list,
+                r#"<li><a href="/s/{i}">Story number {i}, with a title of some length</a></li>"#
+            )
+            .expect("writing to a String cannot fail");
+        }
+        format!(
+            "<html><head><title>T</title></head><body><ul>{list}</ul>\
+             <article><h1>Title</h1><p>{prose}</p></article></body></html>"
+        )
+    }
+
+    #[test]
+    fn a_short_article_under_a_fifth_of_the_page_gives_way_to_the_whole_page() {
+        let html = article_beside_a_list(5, 100);
+
+        let (markdown, mode) = extract_html(&html, None, false);
+
+        assert_eq!(mode, Extraction::RawHtml, "got: {markdown}");
+        assert!(markdown.contains("Story number 99"), "got: {markdown}");
+        assert!(
+            markdown.contains("belongs to the article"),
+            "got: {markdown}"
+        );
+    }
+
+    #[test]
+    fn a_short_article_that_is_most_of_the_page_stays_the_result() {
+        let html = article_beside_a_list(5, 3);
+
+        let (markdown, mode) = extract_html(&html, None, false);
+
+        assert_eq!(mode, Extraction::Readability, "got: {markdown}");
+        assert!(!markdown.contains("Story number"), "got: {markdown}");
+    }
+
+    #[test]
+    fn the_whole_page_skips_script_and_style_and_keeps_noscript() {
+        let html = r#"<html><head><style>.card { color: red; }</style></head><body>
+            <script>window.boot = {"flags": 1};</script>
+            <noscript><p>The topic list, served for readers without scripts.</p></noscript>
+            <p>Status: up.</p></body></html>"#;
+
+        for raw in [false, true] {
+            let (markdown, mode) = extract_html(html, None, raw);
+
+            assert_eq!(mode, Extraction::RawHtml, "raw {raw}: {markdown}");
+            assert!(
+                !markdown.contains("color: red") && !markdown.contains("window.boot"),
+                "raw {raw}: {markdown}"
+            );
+            assert!(
+                markdown.contains("The topic list") && markdown.contains("Status: up."),
+                "raw {raw}: {markdown}"
             );
         }
     }
